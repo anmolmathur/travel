@@ -1,0 +1,17 @@
+{
+  "name": "wander",
+  "version": "1.0.0",
+  "description": "Self-hosted flight logbook: every flight on a globe, lifetime stats, AI-assisted entry and an MCP endpoint for agents.",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "dev": "WANDER_DB=./data/dev.db COOKIE_SECURE=false node --watch --disable-warning=ExperimentalWarning server/index.js",
+    "import": "node --disable-warning=ExperimentalWarning server/cli.js import",
+    "export": "node --disable-warning=ExperimentalWarning server/cli.js export",
+    "token": "node server/cli.js token",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "license": "MIT"
+}

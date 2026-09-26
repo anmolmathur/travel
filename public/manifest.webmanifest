@@ -1,0 +1,2 @@
+{ "name": "Wander", "short_name": "Wander", "start_url": "/", "display": "standalone", "background_color": "#060A13", "theme_color": "#060A13",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }] }

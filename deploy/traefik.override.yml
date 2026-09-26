@@ -1,0 +1,15 @@
+# Traefik: use with `docker compose -f docker-compose.yml -f deploy/traefik.override.yml up -d`.
+# Assumes an external network named "proxy" and a cert resolver named "letsencrypt"; rename to match yours.
+services:
+  wander:
+    ports: !reset []
+    networks: [proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.wander.rule=Host(`wander.anmolmathur.com`)
+      - traefik.http.routers.wander.entrypoints=websecure
+      - traefik.http.routers.wander.tls.certresolver=letsencrypt
+      - traefik.http.services.wander.loadbalancer.server.port=3000
+networks:
+  proxy:
+    external: true
