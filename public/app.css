@@ -378,3 +378,14 @@ body:not([data-tab="overview"]) .scroll-cue{display:none}
 .people-list{display:grid;gap:8px;margin:14px 0}
 .people-list .prow{display:flex;gap:8px;align-items:center}
 .people-list input{height:36px;border-radius:10px;border:1px solid var(--line-2);background:var(--bg-2);padding:0 12px;flex:1;min-width:0}
+
+/* modes of transport */
+.globe-legend{flex-wrap:wrap;row-gap:6px}
+.l-modes{display:contents!important}
+.l-modes[hidden]{display:none!important}
+.seg.modes{flex-wrap:wrap;margin:0 0 16px}
+.seg.modes button{padding:7px 14px}
+.form.ground .air-only,.form:not(.ground) .ground-only{display:none!important}
+.form.ground .lookup-only{display:none!important}
+.gm{font-style:normal;font-size:.95em;margin:0 3px}
+.chain .gm{opacity:.95}
