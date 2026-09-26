@@ -18,6 +18,7 @@ const flightFields = {
   reason: { type: "string", enum: ["leisure", "business", "crew", "other"] },
   trip: { type: "string" },
   note: { type: "string", description: "Free text, e.g. booking reference." },
+  travellers: { type: "array", items: { type: "string" }, description: 'Person ids who flew, from list_people. Defaults to ["me"] (the owner).' },
 };
 
 export const TOOLS = [
@@ -25,6 +26,7 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: {
       year: { type: "string" }, airport: { type: "string", description: "IATA code; matches departure or arrival." }, from: { type: "string" }, to: { type: "string" },
       airline: { type: "string", description: "IATA airline code, e.g. 6E" }, status: { type: "string", enum: ["flown", "upcoming", "cancelled"] },
+      traveller: { type: "string", description: 'Person id from list_people, or "unassigned".' },
       q: { type: "string", description: "Free-text search" }, limit: { type: "number", description: "Default 50, max 500" } } },
     annotations: { readOnlyHint: true } },
   { name: "add_flight", description: "Add one flight to the log. Future dates are stored as upcoming. Distance is computed from the airports.",
@@ -38,15 +40,20 @@ export const TOOLS = [
   { name: "restore_flight", description: "Undo mark_not_flown.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "delete_flight", description: "Permanently delete a flight entered by mistake. Prefer mark_not_flown for flights that were booked but not taken.",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] }, annotations: { destructiveHint: true } },
-  { name: "get_stats", description: "Lifetime or single-year statistics: flights, km, time in air, airports, countries, airlines, top routes, flights per year.",
-    inputSchema: { type: "object", properties: { year: { type: "string" } } }, annotations: { readOnlyHint: true } },
+  { name: "replace_airport", description: "Swap an airport code on every flight that uses it (or only the given flight ids), for example when HKT (Phuket) was picked by mistake for HKG (Hong Kong). Distances are recalculated.",
+    inputSchema: { type: "object", properties: { from: { type: "string", description: "Wrong IATA code" }, to: { type: "string", description: "Correct IATA code" }, ids: { type: "array", items: { type: "string" } } }, required: ["from", "to"] } },
+  { name: "get_stats", description: "Lifetime or single-year statistics for one person (default the owner, \"me\"; \"all\" for the family): flights, km, time in air, airports, countries, airlines, top routes, flights per year.",
+    inputSchema: { type: "object", properties: { year: { type: "string" }, traveller: { type: "string" } } }, annotations: { readOnlyHint: true } },
+  { name: "list_people", description: "The people whose flights are logged (the owner is id \"me\").", inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true } },
+  { name: "set_travellers", description: "Record who flew one or more flights. Use travellers to replace the list, or add/remove to adjust it.",
+    inputSchema: { type: "object", properties: { ids: { type: "array", items: { type: "string" } }, travellers: { type: "array", items: { type: "string" } }, add: { type: "array", items: { type: "string" } }, remove: { type: "array", items: { type: "string" } } }, required: ["ids"] } },
   { name: "review_queue", description: "Flights that were probably not flown: codeshares logged twice, duplicates, rebookings, itineraries that don't connect.",
     inputSchema: { type: "object", properties: {} }, annotations: { readOnlyHint: true } },
   { name: "lookup_flight", description: "Look up schedule, aircraft and status for a flight number on a date (needs AERODATABOX_API_KEY on the server).",
     inputSchema: { type: "object", properties: { flight: { type: "string" }, date: { type: "string" } }, required: ["flight", "date"] }, annotations: { readOnlyHint: true } },
 ];
 
-const WRITE_TOOLS = new Set(["add_flight", "add_flights", "update_flight", "mark_not_flown", "restore_flight", "delete_flight"]);
+const WRITE_TOOLS = new Set(["set_travellers", "replace_airport", "add_flight", "add_flights", "update_flight", "mark_not_flown", "restore_flight", "delete_flight"]);
 
 export async function handleMcp(message, { service, canWrite }) {
   const reply = result => ({ jsonrpc: "2.0", id: message.id, result });
@@ -101,7 +108,10 @@ async function callTool(name, a, service) {
     case "mark_not_flown": return slim(service.patch(a.id, { status: "cancelled" }));
     case "restore_flight": return slim(service.patch(a.id, { status: "flown" }));
     case "delete_flight": return service.remove(a.id);
-    case "get_stats": return service.stats(a.year);
+    case "replace_airport": return service.replaceAirport(a.from, a.to, a.ids);
+    case "get_stats": return service.stats(a.year, a.traveller || "me");
+    case "list_people": return service.people();
+    case "set_travellers": return service.setTravellers(a.ids, a);
     case "review_queue": return service.reviewQueue();
     case "lookup_flight": return service.lookup(a.flight, a.date);
   }
@@ -109,5 +119,6 @@ async function callTool(name, a, service) {
 
 function slim(f) {
   const { id, date, time, from, to, flight, distanceKm, duration, aircraft, seat, seatType, cabin, reason, status, note, trip } = f;
-  return Object.fromEntries(Object.entries({ id, date, time, from, to, flight, distanceKm, duration, aircraft, seat, seatType, cabin, reason, status, note, trip }).filter(([, v]) => v !== "" && v !== undefined));
+  const travellers = Array.isArray(f.travellers) ? f.travellers : ["me"];
+  return Object.fromEntries(Object.entries({ id, date, time, from, to, flight, distanceKm, duration, aircraft, seat, seatType, cabin, reason, status, note, trip, travellers }).filter(([, v]) => v !== "" && v !== undefined));
 }

@@ -37,12 +37,20 @@
 </header>
 
 <main>
-  <section class="hero">
+  <section class="hero" id="hero">
+    <div class="globe-wrap" id="globeWrap">
+      <canvas id="globe" aria-label="Map of every route flown. Drag to move, pinch or Ctrl + scroll to zoom." role="img"></canvas>
+      <div class="globe-tip" id="tip" hidden></div>
+      <div class="zoom-hint" id="zoomHint" hidden>Use Ctrl + scroll (⌘ + scroll on Mac) to zoom the map</div>
+    </div>
     <div class="hero-copy">
-      <p class="eyebrow" id="heroEyebrow">Your flights</p>
-      <h1 class="hero-km"><span id="heroKm">0</span><small> km</small></h1>
-      <p class="hero-sub" id="heroSub">&nbsp;</p>
-      <div class="hero-stats" id="heroStats"></div>
+      <div class="people" id="people" role="group" aria-label="Whose flights"></div>
+      <div class="glass">
+        <p class="eyebrow" id="heroEyebrow">Your flights</p>
+        <h1 class="hero-km"><span id="heroKm">0</span><small> km</small></h1>
+        <p class="hero-sub" id="heroSub">&nbsp;</p>
+        <div class="hero-stats" id="heroStats"></div>
+      </div>
       <div class="hero-ctl">
         <div class="seg" role="group" aria-label="Map style">
           <button type="button" data-view="globe" aria-pressed="true">Globe</button>
@@ -52,18 +60,22 @@
         <label class="toggle"><input type="checkbox" id="fCancelled"> Show not-flown</label>
       </div>
     </div>
-    <div class="globe-wrap" id="globeWrap">
-      <canvas id="globe" aria-label="Globe showing every route flown. Drag to rotate, scroll to zoom." role="img"></canvas>
-      <div class="globe-tip" id="tip" hidden></div>
-      <div class="globe-focus" id="focus" hidden></div>
-      <div class="globe-legend"><span><i class="l-flown"></i>Flown</span><span><i class="l-up"></i>Upcoming</span><span><i class="l-home"></i>Home</span></div>
+    <div class="map-tools">
+      <button type="button" class="tool" id="fsBtn" aria-label="Full screen" title="Full screen (F)"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+      <button type="button" class="tool" id="zIn" aria-label="Zoom in" title="Zoom in">+</button>
+      <button type="button" class="tool" id="zOut" aria-label="Zoom out" title="Zoom out">−</button>
+      <button type="button" class="tool" id="zFit" aria-label="Fit to my flights" title="Fit to my flights"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3" fill="currentColor"/><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
     </div>
-  </section>
-
-  <section class="ribbon" aria-label="Filter by year">
-    <button class="yr-all" type="button" id="yAll">All years</button>
-    <div class="years" id="years"></div>
-    <select id="fAirline" class="sel" aria-label="Filter by airline"><option value="all">All airlines</option></select>
+    <div class="globe-focus" id="focus" hidden></div>
+    <div class="hero-bottom">
+      <div class="globe-legend"><span><i class="l-flown"></i>Flown</span><span><i class="l-up"></i>Upcoming</span><span><i class="l-home"></i>Home</span></div>
+      <section class="ribbon" aria-label="Filter by year">
+        <button class="yr-all" type="button" id="yAll">All years</button>
+        <div class="years" id="years"></div>
+        <select id="fAirline" class="sel" aria-label="Filter by airline"><option value="all">All airlines</option></select>
+      </section>
+      <a class="scroll-cue" href="#overview" id="scrollCue">Passport, trips &amp; insights <span aria-hidden="true">↓</span></a>
+    </div>
   </section>
 
   <section class="panel" id="p-overview"></section>
@@ -73,8 +85,9 @@
     <div class="tools">
       <input type="search" id="q" placeholder="Search flight, airport, city, airline, aircraft, seat…" aria-label="Search flights">
       <select class="sel" id="fStatus" aria-label="Status">
-        <option value="all">Every status</option><option value="flown">Flown</option><option value="upcoming">Upcoming</option><option value="cancelled">Not flown</option><option value="flagged">Needs review</option>
+        <option value="all">Every status</option><option value="flown">Flown</option><option value="upcoming">Upcoming</option><option value="cancelled">Not flown</option><option value="flagged">Needs review</option><option value="unassigned">Not assigned to anyone</option>
       </select>
+      <button class="btn owner-only" id="peopleBtn" type="button">People</button>
       <button class="btn owner-only" id="importBtn" type="button">Import CSV</button>
       <input type="file" id="importFile" accept=".csv,text/csv" hidden>
       <a class="btn" id="exportBtn" href="/api/export.csv">Export CSV</a>
@@ -82,7 +95,7 @@
     <div class="tablewrap"><table class="log">
       <thead><tr>
         <th data-k="date">Date</th><th data-k="flight">Flight</th><th data-k="route">Route</th><th data-k="airline">Airline</th>
-        <th data-k="distanceKm" class="r">km</th><th data-k="dur" class="r">Time</th><th data-k="aircraft">Aircraft</th><th data-k="seat">Seat</th><th data-k="status">Status</th><th class="r owner-only"></th>
+        <th data-k="distanceKm" class="r">km</th><th data-k="dur" class="r">Time</th><th data-k="aircraft">Aircraft</th><th data-k="seat">Seat</th><th data-k="who">Who</th><th data-k="status">Status</th><th class="r owner-only"></th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table></div>
@@ -107,6 +120,7 @@
           <div class="field"><label for="iCabin">Cabin</label><select id="iCabin"><option value="economy">Economy</option><option value="premium">Premium economy</option><option value="business">Business</option><option value="first">First</option></select></div>
           <div class="field"><label for="iReason">Reason</label><select id="iReason"><option value="leisure">Leisure</option><option value="business">Business</option><option value="crew">Crew</option><option value="other">Other</option></select></div>
           <div class="field"><label for="iTrip">Trip</label><input id="iTrip" placeholder="Spain 2026"></div>
+          <div class="field wide"><span class="flabel">Who flew</span><div class="who-pick" id="iWho"></div></div>
           <div class="field wide"><label for="iNote">Note or booking reference</label><input id="iNote" placeholder="Anything worth remembering"></div>
         </div>
         <p class="err" id="formErr" role="alert"></p>

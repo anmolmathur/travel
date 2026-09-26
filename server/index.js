@@ -24,7 +24,7 @@ export function buildApp(env = process.env) {
   const db = openDb(env.WANDER_DB || join(ROOT, "data", "wander.db"));
   const gemini = createGemini({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL || "gemini-2.5-flash", smartModel: env.GEMINI_MODEL_SMART || env.GEMINI_MODEL || "gemini-2.5-flash" });
   const lookupProvider = createAeroDataBox({ apiKey: env.AERODATABOX_API_KEY });
-  const service = createService({ db, ref, gemini, lookupProvider });
+  const service = createService({ db, ref, gemini, lookupProvider, defaultPeople: env.WANDER_PEOPLE || "" });
   const auth = createAuth({
     password: env.WANDER_PASSWORD, apiToken: env.WANDER_API_TOKEN, secret: env.SESSION_SECRET,
     publicRead: env.PUBLIC_READ === "true", secureCookie: env.COOKIE_SECURE !== "false",
@@ -87,20 +87,25 @@ export function buildApp(env = process.env) {
     if (m && method === "PUT") { needWrite(); return send(res, 200, service.replace(m[1], await readJSON(req))); }
     if (m && method === "PATCH") { needWrite(); return send(res, 200, service.patch(m[1], await readJSON(req))); }
     if (m && method === "DELETE") { needWrite(); return send(res, 200, service.remove(m[1])); }
+    if (path === "/api/airports/replace" && method === "POST") { needWrite(); const b = await readJSON(req); return send(res, 200, service.replaceAirport(b.from, b.to, b.ids)); }
     if (path === "/api/import" && method === "POST") { needWrite(); return send(res, 200, service.importCSV(await readBody(req, 5 * 1024 * 1024))); }
     if (path === "/api/export.csv") {
       needRead();
       return send(res, 200, service.exportCSV(), { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="wander-flights-${new Date().toISOString().slice(0, 10)}.csv"` });
     }
-    if (path === "/api/stats") { needRead(); return send(res, 200, service.stats(url.searchParams.get("year") || undefined)); }
-    if (path === "/api/trips") { needRead(); return send(res, 200, service.trips()); }
+    if (path === "/api/stats") { needRead(); return send(res, 200, service.stats(url.searchParams.get("year") || undefined, url.searchParams.get("person") || "me")); }
+    if (path === "/api/trips") { needRead(); return send(res, 200, service.trips(url.searchParams.get("person") || "me")); }
+    if (path === "/api/people" && method === "GET") { needRead(); return send(res, 200, { people: service.people() }); }
+    if (path === "/api/people" && method === "PUT") { needWrite(); return send(res, 200, { people: service.setPeople((await readJSON(req)).people) }); }
+    if (path === "/api/flights/travellers" && method === "POST") { needWrite(); const b = await readJSON(req); return send(res, 200, service.setTravellers(b.ids, b)); }
     if (path === "/api/review") { needRead(); return send(res, 200, service.reviewQueue()); }
     if (path === "/api/lookup") { needWrite(); return send(res, 200, { results: await service.lookup(url.searchParams.get("flight"), url.searchParams.get("date")) }); }
 
+    if (path === "/api/ai/status") { if (who !== "owner" && who !== "agent") throw new InputError("Sign in first.", 401); return send(res, 200, await service.aiStatus()); }
     if (path === "/api/ai/extract" && method === "POST") { needWrite(); return send(res, 200, { flights: await service.aiExtract(await readJSON(req, 12 * 1024 * 1024)) }); }
     if (path === "/api/ai/ask" && method === "POST") { needRead(); if (who === "public") throw new InputError("Sign in to ask questions.", 401); return send(res, 200, { answer: await service.aiAsk((await readJSON(req)).question) }); }
     if (path === "/api/ai/story" && method === "POST") { needRead(); if (who === "public") throw new InputError("Sign in to write a recap.", 401); return send(res, 200, await service.aiStory((await readJSON(req)).year)); }
-    if (path === "/api/ai/trips" && method === "POST") { needWrite(); return send(res, 200, await service.aiNameTrips()); }
+    if (path === "/api/ai/trips" && method === "POST") { needWrite(); return send(res, 200, await service.aiNameTrips((await readJSON(req)).person || "me")); }
     if (path === "/api/ai/next" && method === "POST") { needRead(); if (who === "public") throw new InputError("Sign in for suggestions.", 401); return send(res, 200, { ideas: await service.aiWhereNext() }); }
     return send(res, 404, { error: "Unknown endpoint." });
   }
@@ -130,8 +135,9 @@ export function buildApp(env = process.env) {
       return serveStatic(req, res, url.pathname);
     } catch (e) {
       const status = e.status || 500;
-      if (status >= 500 && !(e instanceof InputError)) console.error(e);
-      if (!res.headersSent) send(res, status, { error: status >= 500 && !(e instanceof InputError) && status !== 502 ? "Something went wrong on the server." : e.message });
+      const known = Boolean(e.status); // errors raised on purpose carry a status and a readable message
+      if (status >= 500 || status === 429) console.error(`${req.method} ${url.pathname} -> ${status}:`, known ? e.message : e);
+      if (!res.headersSent) send(res, status, { error: known ? e.message : "Something went wrong on the server." });
     }
   };
   return { handler, service, db };

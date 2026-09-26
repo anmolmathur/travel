@@ -123,3 +123,49 @@ test("AI endpoints explain when no key is configured", async () => {
     assert.match((await r.json()).error, /GEMINI_API_KEY/);
   });
 });
+
+test("Gemini client switches to a current model when the configured one is gone", async () => {
+  const calls = [];
+  const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+  const fake = async url => {
+    calls.push(url);
+    if (url.includes("/models?")) return reply(200, { models: [
+      { name: "models/gemini-3.0-flash", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3.0-flash-lite", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3.0-pro-preview", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] },
+    ] });
+    if (url.includes("gemini-2.5-flash")) return reply(404, { error: { message: "models/gemini-2.5-flash is not found for API version v1beta" } });
+    return reply(200, { candidates: [{ content: { parts: [{ text: '{"flights":[{"date":"2026-01-01","from":"BOM","to":"DEL"}]}' }] } }] });
+  };
+  const g = createGemini({ apiKey: "k", model: "gemini-2.5-flash", fetchImpl: fake });
+  const out = await g.extract({ text: "x", today: "2026-01-01" });
+  assert.equal(out.length, 1, "wrapped array is unwrapped");
+  assert.equal(g.model, "gemini-3.0-flash");
+  assert.ok(calls.at(-1).includes("gemini-3.0-flash:generateContent"));
+});
+
+test("Gemini client explains blocked answers and bad keys", async () => {
+  const blocked = createGemini({ apiKey: "k", model: "m", fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ promptFeedback: { blockReason: "SAFETY" } }) }) });
+  await assert.rejects(blocked.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /no answer \(SAFETY\)/);
+  const badKey = createGemini({ apiKey: "k", model: "m", fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: "API key not valid. Please pass a valid API key." } }) }) });
+  await assert.rejects(badKey.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /rejected the API key/);
+});
+
+test("replacing an airport fixes every matching flight and can be undone by id", async () => {
+  await withServer({}, async base => {
+    const post = (path, body) => fetch(base + path, { method: "POST", body: JSON.stringify(body) }).then(r => r.json());
+    await post("/api/flights", { date: "2023-03-18", from: "BOM", to: "HKT", flight: "G821" });
+    await post("/api/flights", { date: "2023-03-19", from: "HKT", to: "BOM", flight: "G822" });
+    await post("/api/flights", { date: "2018-09-26", from: "BOM", to: "HKG", flight: "CX660" });
+    const r = await post("/api/airports/replace", { from: "HKT", to: "HKG" });
+    assert.equal(r.replaced, 2);
+    const { flights } = await (await fetch(base + "/api/flights")).json();
+    assert.equal(flights.filter(f => f.from === "HKG" || f.to === "HKG").length, 3);
+    assert.ok(flights.find(f => f.flight === "G821").distanceKm > 4000, "distance recalculated for Hong Kong");
+    const undo = await post("/api/airports/replace", { from: "HKG", to: "HKT", ids: r.ids });
+    assert.equal(undo.replaced, 2, "undo only touches the flights that were changed");
+    const bad = await fetch(base + "/api/airports/replace", { method: "POST", body: JSON.stringify({ from: "HKT", to: "BOM" }) });
+    assert.equal(bad.status, 400);
+  });
+});

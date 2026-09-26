@@ -4,7 +4,7 @@
 const TAU = Math.PI * 2;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onHover }) {
+export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onHover, onWheelHint, isFree = () => false }) {
   const ctx = canvas.getContext("2d");
   const land110 = topojson.feature(world110, world110.objects.countries).features;
   const land50 = topojson.feature(world50, world50.objects.countries).features;
@@ -22,10 +22,13 @@ export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onH
   const base = document.createElement("canvas"), bctx = base.getContext("2d");
   let baseKey = "";
 
+  // Wide screens: push the globe right, clear of the stats panel. Narrow screens: push it down.
+  const offset = () => (W >= 900 ? [W * 0.13, 0] : [0, H * 0.06]);
   const proj = () => {
     if (mode === "globe") {
-      const r = Math.min(W, H) / 2 * 0.86;
-      return d3.geoOrthographic().clipAngle(90).precision(0.4).rotate(rot).scale(r * k).translate([W / 2, H / 2]);
+      const [ox, oy] = offset();
+      const r = Math.min(W - 2 * ox, H - 2 * oy - (W >= 900 ? 110 : 150)) / 2 * 0.94;
+      return d3.geoOrthographic().clipAngle(90).precision(0.4).rotate(rot).scale(Math.max(60, r) * k).translate([W / 2 + ox, H / 2 + oy - (W >= 900 ? 30 : 10)]);
     }
     const p = d3.geoNaturalEarth1().rotate([rot[0], 0]).precision(0.3);
     p.fitExtent([[6, 6], [W - 6, H - 6]], sphere);
@@ -191,7 +194,11 @@ export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onH
   };
   canvas.addEventListener("pointerup", end); canvas.addEventListener("pointercancel", end);
   canvas.addEventListener("pointerleave", () => { hoverAp = null; onHover?.(null); });
-  canvas.addEventListener("wheel", e => { e.preventDefault(); setK(k * Math.exp(-e.deltaY * 0.0015)); lastInteract = performance.now(); }, { passive: false });
+  // Plain scrolling scrolls the page; Ctrl/⌘ + scroll (and trackpad pinch, which sets ctrlKey) zooms.
+  canvas.addEventListener("wheel", e => {
+    if (!(e.ctrlKey || e.metaKey || isFree())) { onWheelHint?.(); return; }
+    e.preventDefault(); setK(k * Math.exp(-e.deltaY * 0.0015)); lastInteract = performance.now();
+  }, { passive: false });
   const setK = v => { k = Math.max(mode === "globe" ? 0.7 : 1, Math.min(mode === "globe" ? 9 : 14, v)); };
 
   function hitAirport(p) {
@@ -253,10 +260,14 @@ export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onH
       k = 1; tx = 0; ty = 0; const P = proj();
       const xy = points.map(p => P(p)).filter(Boolean);
       const [x0, x1] = d3.extent(xy, p => p[0]), [y0, y1] = d3.extent(xy, p => p[1]);
-      const k1 = Math.max(1, Math.min(10, 0.8 / Math.max((x1 - x0 + 40) / W, (y1 - y0 + 40) / H)));
-      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      // Fit into the part of the screen the overlays leave free (right of the stats panel, above the year strip).
+      const left = W >= 900 ? Math.min(500, W * 0.36) : 0, top = W >= 900 ? 0 : 150, bottom = W >= 900 ? 130 : 170;
+      const aw = W - left - 30, ah = H - top - bottom;
+      const k1 = Math.max(1, Math.min(10, 0.85 / Math.max((x1 - x0 + 40) / aw, (y1 - y0 + 40) / ah)));
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, P0 = proj(), [t0x, t0y] = P0.translate();
       k = k0; tx = tx0; ty = ty0;
-      anim = { t0: performance.now(), dur, rot: () => rot, k: d3.interpolate(k0, k1), tx: d3.interpolate(tx0, (W / 2 - cx) * k1), ty: d3.interpolate(ty0, (H / 2 - cy) * k1) };
+      const gx = left + aw / 2, gy = top + ah / 2;
+      anim = { t0: performance.now(), dur, rot: () => rot, k: d3.interpolate(k0, k1), tx: d3.interpolate(tx0, gx - t0x - (cx - t0x) * k1), ty: d3.interpolate(ty0, gy - t0y - (cy - t0y) * k1) };
     }
     lastInteract = performance.now();
   }
@@ -270,6 +281,7 @@ export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onH
   raf = requestAnimationFrame(loop);
   return {
     setData, focusPoints, setMode,
+    zoomBy(f) { anim = null; setK(k * f); lastInteract = performance.now(); },
     setHighlight(ids) { highlight = ids && ids.size ? ids : null; },
     setCutoff(date, fresh) { cutoff = date; freshFrom = fresh || null; },
     project: ll => proj()(ll),

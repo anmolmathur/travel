@@ -13,9 +13,13 @@ if (cmd === "import" && arg) {
   const r = service.importCSV(readFileSync(arg, "utf8"));
   console.log(`Added ${r.added}, skipped ${r.skipped} duplicates, ${r.failed} couldn't be read.`);
   for (const e of r.errors) console.log(`  row ${e.row}: ${e.error}`);
+} else if (cmd === "ai-check") {
+  const s = await service.aiStatus();
+  console.log(JSON.stringify(s, null, 2));
+  process.exit(s.error ? 1 : 0);
 } else if (cmd === "export") {
   process.stdout.write(service.exportCSV());
 } else {
-  console.log("Usage: node server/cli.js import <file.csv> | export | token");
+  console.log("Usage: node server/cli.js import <file.csv> | export | ai-check | token");
   process.exit(1);
 }

@@ -16,6 +16,8 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 **Review.** Flags likely errors: codeshares logged twice (TK774 and WY5774), exact duplicates, a route rebooked within four days with no return in between, days whose flights can't form one journey, and planned flights whose date has passed. **Not flown** keeps a flight in the log (struck through) but removes it from every statistic, and can be undone.
 
+**Family.** Every flight records who flew it. Switch the whole app (map, stats, passport, trips) between people or the whole family with the buttons above the stats. Trips have one-click "Who went" buttons, and flights imported from someone else's bookings arrive unassigned and wait in Review until you say whose they were. Manage the list under Logbook → People, or seed it with `WANDER_PEOPLE=me:Anmol,kruti:Kruti`. CSV exports and imports carry a `Travellers` column (`me;kruti`, or `unassigned`).
+
 **Logbook.** Searchable, sortable table with edit, not-flown and delete. OpenFlights CSV import and export.
 
 ### Gemini features
@@ -29,6 +31,14 @@ With `GEMINI_API_KEY` set, these switch on. All calls go from the server, so the
 - **Where next**: destination ideas you haven't visited, reachable from home.
 
 `GEMINI_MODEL` (default `gemini-2.5-flash`) handles extraction and trip names; `GEMINI_MODEL_SMART` handles questions, recaps and ideas. Change either if Google renames or retires a model.
+
+If an AI feature shows an error, run this on the server. It checks the key, lists the models your key can use and makes two small test calls:
+
+```bash
+docker exec wander node --disable-warning=ExperimentalWarning server/cli.js ai-check
+```
+
+If a configured model has been retired, Wander switches to the newest available model of the same family (flash or pro) and logs which one it picked (`docker logs wander`).
 
 ### Flight lookup (optional)
 
@@ -79,7 +89,7 @@ Back up the database with `docker compose exec wander node server/cli.js export 
 
 ## Let Claude (or any agent) keep the log
 
-Wander serves a [Model Context Protocol](https://modelcontextprotocol.io) endpoint at `/mcp`, authenticated with `WANDER_API_TOKEN`. Tools: `list_flights`, `add_flight`, `add_flights`, `update_flight`, `mark_not_flown`, `restore_flight`, `delete_flight`, `get_stats`, `review_queue`, `lookup_flight`.
+Wander serves a [Model Context Protocol](https://modelcontextprotocol.io) endpoint at `/mcp`, authenticated with `WANDER_API_TOKEN`. Tools: `list_flights`, `list_people`, `set_travellers`, `replace_airport`, `add_flight`, `add_flights`, `update_flight`, `mark_not_flown`, `restore_flight`, `delete_flight`, `get_stats`, `review_queue`, `lookup_flight`.
 
 Claude Code:
 
