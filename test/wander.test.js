@@ -169,3 +169,21 @@ test("replacing an airport fixes every matching flight and can be undone by id",
     assert.equal(bad.status, 400);
   });
 });
+
+test("a busy Gemini model is retried, then another Flash model answers", async () => {
+  const calls = [];
+  const busy = { ok: false, status: 503, json: async () => ({ error: { code: 503, message: "This model is currently experiencing high demand.", status: "UNAVAILABLE" } }) };
+  const fake = async url => {
+    if (url.includes("/models?")) return { ok: true, json: async () => ({ models: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.8-flash-tts", "gemini-flash-lite-latest"].map(n => ({ name: `models/${n}`, supportedGenerationMethods: ["generateContent"] })) }) };
+    const m = decodeURIComponent(url.match(/models\/([^:]+):/)[1]); calls.push(m);
+    return m === "gemini-3.8-flash" ? busy : { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: "42 cities" }] } }] }) };
+  };
+  const g = createGemini({ apiKey: "k", model: "gemini-3.8-flash", fetchImpl: fake });
+  const warn = console.warn; console.warn = () => {};
+  try { assert.equal(await g.ask({ question: "q", table: "", summary: "", today: "2026-09-26" }), "42 cities"); } finally { console.warn = warn; }
+  assert.deepEqual(calls, ["gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.7-flash"]);
+  assert.equal(g.model, "gemini-3.8-flash", "the configured model stays the default");
+
+  const allBusy = createGemini({ apiKey: "k", model: "gemini-3.8-flash", fetchImpl: async url => url.includes("/models?") ? { ok: true, json: async () => ({ models: [] }) } : busy });
+  await assert.rejects(allBusy.ask({ question: "q", table: "", summary: "", today: "2026-09-26" }), e => e.status === 503 && /overloaded/.test(e.message));
+});
