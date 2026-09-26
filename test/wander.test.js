@@ -152,6 +152,14 @@ test("Gemini client explains blocked answers and bad keys", async () => {
   await assert.rejects(badKey.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /rejected the API key/);
 });
 
+test("smart tasks fall back to the fast model when the pro model has no quota", async () => {
+  const fake = async url => url.includes("pro")
+    ? { ok: false, status: 429, json: async () => ({ error: { message: "Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: gemini-3.1-pro" } }) }
+    : { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: "You flew to Delhi 32 times." }] } }] }) };
+  const g = createGemini({ apiKey: "k", model: "gemini-flash-latest", smartModel: "gemini-pro-latest", fetchImpl: fake });
+  assert.match(await g.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /32 times/);
+});
+
 test("replacing an airport fixes every matching flight and can be undone by id", async () => {
   await withServer({}, async base => {
     const post = (path, body) => fetch(base + path, { method: "POST", body: JSON.stringify(body) }).then(r => r.json());
