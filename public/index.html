@@ -44,6 +44,7 @@
       <div class="zoom-hint" id="zoomHint" hidden>Use Ctrl + scroll (⌘ + scroll on Mac) to zoom the map</div>
     </div>
     <div class="hero-copy">
+      <div class="people" id="people" role="group" aria-label="Whose flights"></div>
       <div class="glass">
         <p class="eyebrow" id="heroEyebrow">Your flights</p>
         <h1 class="hero-km"><span id="heroKm">0</span><small> km</small></h1>
@@ -84,8 +85,9 @@
     <div class="tools">
       <input type="search" id="q" placeholder="Search flight, airport, city, airline, aircraft, seat…" aria-label="Search flights">
       <select class="sel" id="fStatus" aria-label="Status">
-        <option value="all">Every status</option><option value="flown">Flown</option><option value="upcoming">Upcoming</option><option value="cancelled">Not flown</option><option value="flagged">Needs review</option>
+        <option value="all">Every status</option><option value="flown">Flown</option><option value="upcoming">Upcoming</option><option value="cancelled">Not flown</option><option value="flagged">Needs review</option><option value="unassigned">Not assigned to anyone</option>
       </select>
+      <button class="btn owner-only" id="peopleBtn" type="button">People</button>
       <button class="btn owner-only" id="importBtn" type="button">Import CSV</button>
       <input type="file" id="importFile" accept=".csv,text/csv" hidden>
       <a class="btn" id="exportBtn" href="/api/export.csv">Export CSV</a>
@@ -93,7 +95,7 @@
     <div class="tablewrap"><table class="log">
       <thead><tr>
         <th data-k="date">Date</th><th data-k="flight">Flight</th><th data-k="route">Route</th><th data-k="airline">Airline</th>
-        <th data-k="distanceKm" class="r">km</th><th data-k="dur" class="r">Time</th><th data-k="aircraft">Aircraft</th><th data-k="seat">Seat</th><th data-k="status">Status</th><th class="r owner-only"></th>
+        <th data-k="distanceKm" class="r">km</th><th data-k="dur" class="r">Time</th><th data-k="aircraft">Aircraft</th><th data-k="seat">Seat</th><th data-k="who">Who</th><th data-k="status">Status</th><th class="r owner-only"></th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table></div>
@@ -118,6 +120,7 @@
           <div class="field"><label for="iCabin">Cabin</label><select id="iCabin"><option value="economy">Economy</option><option value="premium">Premium economy</option><option value="business">Business</option><option value="first">First</option></select></div>
           <div class="field"><label for="iReason">Reason</label><select id="iReason"><option value="leisure">Leisure</option><option value="business">Business</option><option value="crew">Crew</option><option value="other">Other</option></select></div>
           <div class="field"><label for="iTrip">Trip</label><input id="iTrip" placeholder="Spain 2026"></div>
+          <div class="field wide"><span class="flabel">Who flew</span><div class="who-pick" id="iWho"></div></div>
           <div class="field wide"><label for="iNote">Note or booking reference</label><input id="iNote" placeholder="Anything worth remembering"></div>
         </div>
         <p class="err" id="formErr" role="alert"></p>

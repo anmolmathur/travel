@@ -13,8 +13,8 @@ const TODAY = todayISO();
 const INKS = ["#FF6F91", "#7CC4FF", "#F6C667", "#5FD6A8", "#A18CFF", "#FF8A5B"];
 
 let REF, LAND = null, globe, me = { canWrite: false, features: {} };
-let flights = [], tripData = { trips: [], home: null }, FLAGS = new Map(), GROUPS = [];
-const ui = { tab: "overview", year: "all", airline: "all", showCancelled: false, q: "", status: "all", sort: "date", dir: -1, limit: 80, sel: null, editing: null, confirmDel: null, trip: null, replaying: false };
+let flights = [], tripData = { trips: [], home: null }, FLAGS = new Map(), GROUPS = [], PEOPLE = [{ id: "me", name: "Me" }];
+const ui = { person: (() => { try { return localStorage.getItem("wander.person") || "me"; } catch { return "me"; } })(), tab: "overview", year: "all", airline: "all", showCancelled: false, q: "", status: "all", sort: "date", dir: -1, limit: 80, sel: null, editing: null, confirmDel: null, trip: null, replaying: false };
 
 /* ---------------- helpers ---------------- */
 async function api(path, opts = {}) {
@@ -40,8 +40,51 @@ document.addEventListener("error", e => {
 const fmtLat = v => `${Math.abs(v).toFixed(2)}°${v >= 0 ? "N" : "S"}`, fmtLon = v => `${Math.abs(v).toFixed(2)}°${v >= 0 ? "E" : "W"}`;
 
 /* ---------------- data views ---------------- */
+/* ---------------- people ---------------- */
+const whoOf = f => (Array.isArray(f.travellers) ? f.travellers : ["me"]);
+const inView = f => (ui.person === "all" ? whoOf(f).length > 0 : whoOf(f).includes(ui.person));
+const pColor = id => INKS[Math.max(0, PEOPLE.findIndex(p => p.id === id)) % INKS.length];
+const pName = id => PEOPLE.find(p => p.id === id)?.name || id;
+const initials = n => String(n).trim().split(/\s+/).map(w => w[0] || "").join("").slice(0, 2).toUpperCase();
+const avatar = (id, sm) => `<span class="av${sm ? " sm" : ""}" style="--pc:${pColor(id)}" title="${esc(pName(id))}">${esc(initials(pName(id)))}</span>`;
+const defaultWho = () => (ui.person === "all" || !PEOPLE.some(p => p.id === ui.person) ? ["me"] : [ui.person]);
+const tripsUrl = () => `/api/trips?person=${encodeURIComponent(ui.person)}`;
+function renderPeople() {
+  const el = $("#people");
+  if (PEOPLE.length < 2) { el.innerHTML = ""; return; }
+  el.innerHTML = PEOPLE.map(p => `<button type="button" class="pchip" data-person="${esc(p.id)}" aria-pressed="${ui.person === p.id}" style="--pc:${pColor(p.id)}">${avatar(p.id)}${esc(p.name)}</button>`).join("")
+    + `<button type="button" class="pchip" data-person="all" aria-pressed="${ui.person === "all"}"><span class="av fam"></span>Family</button>`;
+}
+async function setPerson(pid) {
+  ui.person = pid; ui.trip = null; try { localStorage.setItem("wander.person", pid); } catch { /* private mode */ }
+  globe.setHighlight(null); $("#focus").hidden = true;
+  tripData = await api(tripsUrl()); renderPeople(); render(); focusVisible();
+}
+function renderWhoPick(selected) {
+  $("#iWho").innerHTML = PEOPLE.map(p => `<label style="--pc:${pColor(p.id)}"><input type="checkbox" value="${esc(p.id)}"${selected.includes(p.id) ? " checked" : ""}>${avatar(p.id, true)}${esc(p.name)}</label>`).join("");
+}
+function openPeople() {
+  const rows = () => $$(".people-list .prow").map(r => ({ id: r.dataset.id || "", name: r.querySelector("input").value.trim() }));
+  const row = p => `<div class="prow" data-id="${esc(p.id)}">${avatar(p.id)}<input value="${esc(p.name)}" maxlength="40" aria-label="Name">${p.id === "me" ? '<span class="muted">you</span>' : '<button class="btn small ghost danger" type="button" data-rm>Remove</button>'}</div>`;
+  openModal(`<div class="story"><p class="eyebrow">People</p><h2 id="modalTitle">Who travels with you</h2>
+    <p class="muted">Flights can belong to any of these people. Switch between their maps from the buttons above the stats.</p>
+    <div class="people-list">${PEOPLE.map(row).join("")}</div>
+    <div class="inline"><input id="newPerson" placeholder="Add someone, e.g. Kruti" maxlength="40" style="height:36px;border-radius:10px;border:1px solid var(--line-2);background:var(--bg-2);padding:0 12px;flex:1"><button class="btn" type="button" id="addPerson">Add</button></div>
+    <p class="err" id="peopleErr"></p><div class="row"><button class="btn primary" type="button" id="savePeople">Save</button></div></div>`);
+  const list = $(".people-list");
+  list.onclick = e => { if (e.target.closest("[data-rm]")) e.target.closest(".prow").remove(); };
+  $("#addPerson").onclick = () => { const n = $("#newPerson").value.trim(); if (!n) return; list.insertAdjacentHTML("beforeend", `<div class="prow" data-id=""><span class="av">${esc(initials(n))}</span><input value="${esc(n)}" maxlength="40" aria-label="Name"><button class="btn small ghost danger" type="button" data-rm>Remove</button></div>`); $("#newPerson").value = ""; };
+  $("#savePeople").onclick = async () => {
+    try {
+      const { people } = await api("/api/people", { method: "PUT", body: JSON.stringify({ people: rows().map(r => ({ id: r.id || r.name, name: r.name })) }) });
+      PEOPLE = people; if (!PEOPLE.some(p => p.id === ui.person)) ui.person = "me";
+      $("#modal").hidden = true; renderPeople(); await reload(); toast("People saved");
+    } catch (e) { $("#peopleErr").textContent = e.message; }
+  };
+}
+
 function visible(ignoreYear = false) {
-  return flights.filter(f => (ignoreYear || ui.year === "all" || f.date.startsWith(ui.year)) && (ui.airline === "all" || f.airline === ui.airline) && (ui.showCancelled || statusOf(f) !== "cancelled"));
+  return flights.filter(f => inView(f) && (ignoreYear || ui.year === "all" || f.date.startsWith(ui.year)) && (ui.airline === "all" || f.airline === ui.airline) && (ui.showCancelled || statusOf(f) !== "cancelled"));
 }
 const flown = list => list.filter(f => statusOf(f) === "flown");
 
@@ -66,12 +109,14 @@ async function boot() {
   });
   fillLists();
   await reload();
+  resetForm();
   go((location.hash || "#overview").slice(1), true);
 }
 async function reload() {
-  const [{ flights: fs }, trips] = await Promise.all([api("/api/flights"), api("/api/trips")]);
-  flights = fs; tripData = trips;
-  fillFilters(); render();
+  const [{ flights: fs }, { people }] = await Promise.all([api("/api/flights"), api("/api/people")]);
+  PEOPLE = people; if (ui.person !== "all" && !PEOPLE.some(p => p.id === ui.person)) ui.person = "me";
+  flights = fs; tripData = await api(tripsUrl());
+  fillFilters(); renderPeople(); render();
 }
 
 /* ---------------- render all ---------------- */
@@ -101,7 +146,7 @@ function drawGlobeData() {
   globe.setData({
     routes: [...routes.values()].filter(r => r.a && r.b).sort((a, b) => a.n - b.n),
     airports: [...counts.entries()].map(([c, x]) => ({ a: ap(c), n: x.n, ids: x.ids })).filter(d => d.a),
-    visited: visitedIds, home: s.home || tripData.home,
+    visited: visitedIds, home: tripData.home || s.home,
   });
   if (!drawGlobeData.done && s.home) { drawGlobeData.done = true; const h = ap(s.home); globe.focusPoints([[h.lon, h.lat]], 10); }
 }
@@ -117,7 +162,8 @@ function hero() {
   const list = visible(), fl = flown(list), s = computeStats(fl, REF);
   countUp($("#heroKm"), s.km);
   const days = s.min / 1440;
-  $("#heroEyebrow").textContent = ui.year === "all" ? (s.first ? `Since ${MONTHS[+s.first.date.slice(5, 7) - 1]} ${s.first.date.slice(0, 4)}` : "Your flights") : `In ${ui.year}`;
+  const who = PEOPLE.length < 2 || ui.person === "me" ? "" : ui.person === "all" ? "Family · " : `${pName(ui.person)} · `;
+  $("#heroEyebrow").textContent = who + (ui.year === "all" ? (s.first ? `Since ${MONTHS[+s.first.date.slice(5, 7) - 1]} ${s.first.date.slice(0, 4)}` : "Flights") : `In ${ui.year}`);
   $("#heroSub").innerHTML = s.n ? `<b>${(s.km / 40075).toFixed(1)}×</b> around the Earth, and <b>${days >= 1 ? days.toFixed(1) + " days" : hm(s.min) + " hours"}</b> in the air.` : "Nothing flown in this view yet.";
   const up = list.filter(f => statusOf(f) === "upcoming").length;
   $("#heroStats").innerHTML = [["Flights", s.n], ["Airports", s.airports.size], ["Countries", s.countries.size], [up ? "Upcoming" : "Airlines", up || s.carriers.size]]
@@ -282,14 +328,15 @@ function renderTrips() {
       return `<article class="trip${ui.trip === t.id ? " sel" : ""}" data-trip="${esc(t.id)}" tabindex="0">
         ${tripSvg(t)}
         <div><div class="when">${t.when.toUpperCase()} · ${t.days} DAY${t.days > 1 ? "S" : ""}${t.upcoming ? ' · <span class="tag up">upcoming</span>' : ""}</div>
-          <h4>${esc(t.ai?.name || t.name)}</h4>${t.ai?.summary ? `<p class="sum">${esc(t.ai.summary)}</p>` : ""}<div class="chain">${chain}</div></div>
+          <h4>${esc(t.ai?.name || t.name)}</h4>${t.ai?.summary ? `<p class="sum">${esc(t.ai.summary)}</p>` : ""}<div class="chain">${chain}</div>
+        ${me.canWrite && PEOPLE.length > 1 ? `<div class="who-row"><span class="muted">Who went</span>${PEOPLE.map(p => `<button type="button" class="who-tog" data-who="${esc(p.id)}" data-tripid="${esc(t.id)}" aria-pressed="${legs.every(f => whoOf(f).includes(p.id))}" style="--pc:${pColor(p.id)}">${avatar(p.id, true)}${esc(p.name)}</button>`).join("")}</div>` : ""}</div>
         <div class="side"><span class="km">${fmt(t.km)} <small class="muted">km</small></span><span class="flags">${t.countries.filter(c => c !== ap(tripData.home)?.cc).slice(0, 5).map(c => flag(c, 20)).join("")}</span><span class="muted">${legs.length} flight${legs.length > 1 ? "s" : ""}</span></div>
       </article>`;
     }).join("");
   }).join("")}</div>`;
   const nb = $("#nameBtn"); if (nb) nb.onclick = async () => {
     nb.disabled = true; nb.textContent = "Naming…";
-    try { await api("/api/ai/trips", { method: "POST", body: "{}" }); tripData = await api("/api/trips"); renderTrips(); toast("Trips named"); }
+    try { await api("/api/ai/trips", { method: "POST", body: JSON.stringify({ person: ui.person }) }); tripData = await api(tripsUrl()); renderTrips(); toast("Trips named"); }
     catch (e) { toast(e.message); nb.disabled = false; nb.textContent = "Try again"; }
   };
 }
@@ -363,12 +410,12 @@ function renderInsights() {
 }
 
 /* ---------------- logbook ---------------- */
-function sortVal(f, k) { switch (k) { case "route": return f.from + f.to; case "dur": return durMin(f); case "airline": return airlineName(REF, f.airline); case "status": return statusOf(f); default: return f[k] ?? ""; } }
+function sortVal(f, k) { switch (k) { case "route": return f.from + f.to; case "dur": return durMin(f); case "airline": return airlineName(REF, f.airline); case "status": return statusOf(f); case "who": return whoOf(f).join(","); default: return f[k] ?? ""; } }
 function renderTable() {
   const terms = ui.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  let list = (ui.status === "cancelled" ? flights.filter(f => statusOf(f) === "cancelled") : visible()).filter(f => {
+  let list = (ui.status === "cancelled" ? flights.filter(f => statusOf(f) === "cancelled" && (inView(f) || !whoOf(f).length)) : ui.status === "unassigned" ? flights.filter(f => !whoOf(f).length) : visible()).filter(f => {
     if (ui.status === "flagged" && !FLAGS.has(f.id)) return false;
-    if (!["all", "flagged", "cancelled"].includes(ui.status) && statusOf(f) !== ui.status) return false;
+    if (!["all", "flagged", "cancelled", "unassigned"].includes(ui.status) && statusOf(f) !== ui.status) return false;
     if (!terms.length) return true;
     const hay = [f.date, f.flight, fnPretty(f), f.from, f.to, ap(f.from)?.city, ap(f.to)?.city, airlineName(REF, f.airline), f.aircraft, planeName(REF, f.aircraft), f.seat, f.trip, f.note, f.registration].join(" ").toLowerCase();
     return terms.every(t => hay.includes(t));
@@ -381,10 +428,11 @@ function renderTable() {
       <td class="mono">${f.date}</td><td class="mono">${esc(fnPretty(f))}</td><td class="route"><b>${f.from}</b><i>→</i><b>${f.to}</b></td>
       <td><span class="al-cell"><img src="https://pics.avs.io/120/48/${esc(f.airline)}.png" alt="" loading="lazy" data-fb="img">${esc(airlineName(REF, f.airline))}</span></td>
       <td class="r mono">${fmt(f.distanceKm || 0)}</td><td class="r mono">${hm(durMin(f))}</td><td class="mono" title="${esc(planeName(REF, f.aircraft))}">${esc(f.aircraft || "")}</td><td class="mono">${esc(f.seat || "")}</td>
+      <td><span class="whos">${whoOf(f).map(id => avatar(id, true)).join("") || '<span class="tag warn">unassigned</span>'}</span></td>
       <td class="st">${st === "cancelled" ? '<span class="tag warn">not flown</span>' : st === "upcoming" ? '<span class="tag up">upcoming</span>' : '<span class="tag ok">flown</span>'}${fl ? `<span class="dot" title="${esc(fl[0].msg)}"></span>` : ""}</td>
       <td class="act owner-only">${st === "cancelled" ? '<button class="btn small" data-a="restore" type="button">Restore</button>' : '<button class="btn small" data-a="cancel" type="button" title="Booked but not flown">Not flown</button>'}
         <button class="btn small ghost" data-a="edit" type="button">Edit</button>${ui.confirmDel === f.id ? '<button class="btn small danger" data-a="del2" type="button">Confirm</button>' : '<button class="btn small ghost danger" data-a="del" type="button" aria-label="Delete">✕</button>'}</td></tr>`;
-  }).join("") : `<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--ink-3)">No flights match.</td></tr>`;
+  }).join("") : `<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--ink-3)">No flights match.</td></tr>`;
   $("#more").innerHTML = list.length > ui.limit ? `<button class="btn" id="moreBtn" type="button">Show ${Math.min(100, list.length - ui.limit)} more</button>` : `<span class="muted">${list.length} flight${list.length === 1 ? "" : "s"}</span>`;
   const mb = $("#moreBtn"); if (mb) mb.onclick = () => { ui.limit += 100; renderTable(); };
   $$("th[data-k]").forEach(th => { th.textContent = th.textContent.replace(/ [▲▼]$/, ""); if (th.dataset.k === ui.sort) th.textContent += ui.dir > 0 ? " ▲" : " ▼"; });
@@ -402,7 +450,7 @@ async function act(id, a) {
       await api(`/api/flights/${encodeURIComponent(id)}`, { method: "DELETE" }); flights = flights.filter(x => x.id !== id); ui.confirmDel = null;
       const { id: _i, ...doc } = f; toast("Flight deleted", async () => { await api("/api/flights", { method: "POST", body: JSON.stringify(doc) }); reload(); });
     }
-    tripData = await api("/api/trips"); render();
+    tripData = await api(tripsUrl()); render();
   } catch (e) { toast(e.message); }
 }
 
@@ -412,10 +460,18 @@ function renderReview() {
   if (!GROUPS.length) { el.innerHTML = `<div class="empty"><h2>All clear</h2><p>Duplicates, codeshares logged twice and itineraries that don't connect will show up here.</p></div>`; return; }
   const sevName = { high: "Likely error", med: "Check this", low: "Worth a look" };
   el.innerHTML = `<div class="sec-head"><h2>Review <em>· ${GROUPS.length}</em></h2></div>
-  <p class="intro">Wander checks your log for flights that probably didn't happen: codeshares logged under two flight numbers, rebooked tickets whose original was never removed, and days where the flights can't form one journey. Mark the ones you didn't take as <b>not flown</b>. They stay in the log but leave every statistic.</p>
-  <div class="rv">${GROUPS.map(g => `<div class="rvg ${g.sev === "high" ? "high" : g.sev === "low" ? "low" : ""}"><p class="eyebrow">${sevName[g.sev]}</p><h4>${esc(g.title)}</h4><p>${esc(g.msg)}</p>
+  <p class="intro">Wander checks each person's flights for ones that probably didn't happen: codeshares logged under two flight numbers, rebooked tickets whose original was never removed, and days where the flights can't form one journey. Mark those as <b>not flown</b>: they stay in the log but leave every statistic. Flights that aren't assigned to anyone wait here until you say who flew them.</p>
+  <div class="rv">${GROUPS.map(g => {
+    const others = PEOPLE.filter(p => p.id !== "me");
+    const assign = g.kind === "unassigned" ? `<div class="assign owner-only" data-ids="${esc(g.items.map(f => f.id).join(","))}">
+      ${PEOPLE.map(p => `<button class="btn small" type="button" data-assign="${esc(p.id)}">${avatar(p.id, true)} ${esc(p.name)}</button>`).join("")}
+      ${others.length > 1 ? `<button class="btn small" type="button" data-assign="${esc(others.map(p => p.id).join(","))}">${esc(others.map(p => p.name).join(" & "))}</button>` : ""}
+      ${PEOPLE.length > 1 ? `<button class="btn small" type="button" data-assign="${esc(PEOPLE.map(p => p.id).join(","))}">Everyone</button>` : ""}
+      <button class="btn small ghost" type="button" data-assign-cancel>None of us flew these</button></div>` : "";
+    return `<div class="rvg ${g.sev === "high" ? "high" : g.sev === "low" ? "low" : ""}"><p class="eyebrow">${sevName[g.sev]}${g.person && PEOPLE.length > 1 ? `<span class="person-tag">${esc(pName(g.person))}</span>` : ""}</p><h4>${esc(g.title)}</h4><p>${esc(g.msg)}</p>${assign}
     ${g.items.map(f => `<div class="rvrow" data-id="${esc(f.id)}"><span class="mono">${f.date}</span><b class="mono">${esc(fnPretty(f))}</b><span class="mono">${f.from} → ${f.to}</span><span>${esc(airlineName(REF, f.airline))}</span>
-      <span class="sp">${g.suggest === f.id ? '<span class="tag warn">suggested</span>' : ""}<span class="owner-only"><button class="btn small" data-a="cancel" type="button">Not flown</button> <button class="btn small ghost" data-a="keep" type="button">I flew this</button></span></span></div>`).join("")}</div>`).join("")}</div>`;
+      <span class="sp">${g.suggest === f.id ? '<span class="tag warn">suggested</span>' : ""}<span class="owner-only"><button class="btn small" data-a="cancel" type="button">Not flown</button>${g.kind === "unassigned" ? "" : ' <button class="btn small ghost" data-a="keep" type="button">Flown</button>'}</span></span></div>`).join("")}</div>`;
+  }).join("")}</div>`;
 }
 
 /* ---------------- add / edit ---------------- */
@@ -432,7 +488,7 @@ function formVals() {
   const v = id => $(id).value.trim();
   return { date: v("#iDate"), time: v("#iTime"), flight: v("#iFlight").replace(/\s+/g, "").toUpperCase(), from: v("#iFrom").slice(0, 3).toUpperCase(), to: v("#iTo").slice(0, 3).toUpperCase(),
     duration: v("#iDur"), aircraft: v("#iAircraft").toUpperCase(), seat: v("#iSeat").toUpperCase(), seatType: v("#iSeatType"), cabin: v("#iCabin"), reason: v("#iReason"),
-    registration: v("#iReg").toUpperCase(), trip: v("#iTrip"), note: v("#iNote") };
+    registration: v("#iReg").toUpperCase(), trip: v("#iTrip"), note: v("#iNote"), travellers: $$("#iWho input:checked").map(i => i.value) };
 }
 function formHints() {
   const f = formVals(), a = ap(f.from), b = ap(f.to);
@@ -447,18 +503,19 @@ function formHints() {
   $("#hDur").textContent = a && b ? `${fmt(hav(a, b))} km · about ${hm(estDur(hav(a, b)))}` : "";
   $("#hAircraft").textContent = f.aircraft ? planeName(REF, f.aircraft) : "";
 }
-function resetForm() { $("#form").reset(); ui.editing = null; $("#formTitle").textContent = "Log a flight"; $("#saveBtn").textContent = "Save flight"; $("#formErr").textContent = ""; $("#iDate").value = TODAY; formHints(); }
+function resetForm() { $("#form").reset(); ui.editing = null; $("#formTitle").textContent = "Log a flight"; $("#saveBtn").textContent = "Save flight"; $("#formErr").textContent = ""; $("#iDate").value = TODAY; renderWhoPick(defaultWho()); formHints(); }
 function loadForm(f) {
   resetForm(); ui.editing = f.id || null;
   if (f.id) { $("#formTitle").textContent = `Edit ${fnPretty(f) || "flight"} · ${f.date}`; $("#saveBtn").textContent = "Save changes"; }
   const set = (id, v) => ($(id).value = v || "");
   set("#iDate", f.date); set("#iTime", f.time); set("#iFlight", fnPretty(f)); set("#iFrom", f.from); set("#iTo", f.to); set("#iDur", f.duration); set("#iAircraft", f.aircraft); set("#iSeat", f.seat);
   set("#iSeatType", f.seatType); set("#iCabin", f.cabin || "economy"); set("#iReason", f.reason || "leisure"); set("#iReg", f.registration); set("#iTrip", f.trip); set("#iNote", f.note);
+  renderWhoPick(Array.isArray(f.travellers) ? f.travellers : defaultWho());
   formHints();
 }
 async function saveForm(e) {
   e.preventDefault();
-  const f = formVals(), err = validate(f, REF); $("#formErr").textContent = err; if (err) return;
+  const f = formVals(), err = validate(f, REF) || (f.travellers.length ? "" : "Choose who flew."); $("#formErr").textContent = err; if (err) return;
   const btn = $("#saveBtn"); btn.disabled = true;
   try {
     if (ui.editing) { const old = flights.find(x => x.id === ui.editing); await api(`/api/flights/${encodeURIComponent(ui.editing)}`, { method: "PUT", body: JSON.stringify({ ...f, status: old?.status === "cancelled" ? "cancelled" : undefined, reviewed: old?.reviewed }) }); toast("Changes saved"); }
@@ -508,7 +565,7 @@ function renderParsed() {
 }
 async function addParsed(i, quiet) {
   const r = parsed[i];
-  try { await api("/api/flights", { method: "POST", body: JSON.stringify(r) }); parsed.splice(i, 1); renderParsed(); if (!quiet) { toast(`${r.from}→${r.to} added`); await reload(); } }
+  try { await api("/api/flights", { method: "POST", body: JSON.stringify({ ...r, travellers: defaultWho() }) }); parsed.splice(i, 1); renderParsed(); if (!quiet) { toast(`${r.from}→${r.to} added`); await reload(); } }
   catch (e) { toast(e.message); }
 }
 
@@ -613,8 +670,32 @@ function wire() {
     if (f) { globe.focusPoints([[ap(f.from).lon, ap(f.from).lat], [ap(f.to).lon, ap(f.to).lat]]); $(".hero").scrollIntoView({ behavior: "smooth" }); }
     renderTable();
   };
-  $("#p-review").onclick = e => { const b = e.target.closest("button[data-a]"), r = e.target.closest("[data-id]"); if (b && r) act(r.dataset.id, b.dataset.a); };
-  $("#p-trips").onclick = e => { const kb = e.target.closest("[data-kind]"); if (kb) { ui.tripKind = kb.dataset.kind; renderTrips(); return; } const s = e.target.closest("[data-story]"); if (s) { story(s.dataset.story); return; } const t = e.target.closest("[data-trip]"); if (t) selectTrip(t.dataset.trip); };
+  $("#people").onclick = e => { const b = e.target.closest("[data-person]"); if (b && b.dataset.person !== ui.person) setPerson(b.dataset.person); };
+  $("#peopleBtn").onclick = openPeople;
+  $("#p-review").onclick = async e => {
+    const box = e.target.closest(".assign");
+    if (box) {
+      const ids = box.dataset.ids.split(","), b = e.target.closest("button"); if (!b) return;
+      b.disabled = true;
+      try {
+        if (b.hasAttribute("data-assign-cancel")) { for (const id of ids) await api(`/api/flights/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) }); toast(`${ids.length} flight${ids.length > 1 ? "s" : ""} marked not flown`); }
+        else { const who = b.dataset.assign.split(","); await api("/api/flights/travellers", { method: "POST", body: JSON.stringify({ ids, travellers: who }) }); toast(`Assigned to ${who.map(pName).join(" & ")}`, async () => { await api("/api/flights/travellers", { method: "POST", body: JSON.stringify({ ids, travellers: [] }) }); await reload(); }); }
+        await reload();
+      } catch (err) { toast(err.message); b.disabled = false; }
+      return;
+    }
+    const b = e.target.closest("button[data-a]"), r = e.target.closest("[data-id]"); if (b && r) act(r.dataset.id, b.dataset.a);
+  };
+  $("#p-trips").onclick = async e => {
+    const wb = e.target.closest("[data-who]");
+    if (wb) {
+      const t = tripData.trips.find(x => x.id === wb.dataset.tripid); if (!t) return;
+      const on = wb.getAttribute("aria-pressed") === "true", pid = wb.dataset.who;
+      try { await api("/api/flights/travellers", { method: "POST", body: JSON.stringify({ ids: t.flights, [on ? "remove" : "add"]: [pid] }) }); await reload(); toast(`${pName(pid)} ${on ? "removed from" : "added to"} this trip`); }
+      catch (err) { toast(err.message); }
+      return;
+    }
+    const kb = e.target.closest("[data-kind]"); if (kb) { ui.tripKind = kb.dataset.kind; renderTrips(); return; } const s = e.target.closest("[data-story]"); if (s) { story(s.dataset.story); return; } const t = e.target.closest("[data-trip]"); if (t) selectTrip(t.dataset.trip); };
   $("#p-trips").onkeydown = e => { if (e.key === "Enter") { const t = e.target.closest("[data-trip]"); if (t) selectTrip(t.dataset.trip); } };
   $("#form").addEventListener("submit", saveForm);
   ["#iFlight", "#iFrom", "#iTo", "#iAircraft", "#iDur"].forEach(id => $(id).addEventListener("input", formHints));
