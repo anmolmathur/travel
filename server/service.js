@@ -251,7 +251,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
       visited: [...s.countries.keys()].map(c => countryName(ref, c)),
       topRoutes: [...s.routes.values()].sort((a, b) => b.n - a.n).slice(0, 8).map(r => r.a.join("-")),
     })).map(x => ({ ...x, iata: x.iata || x.IATA || x.code || x.airport || "" })).filter(x => x && x.city);
-    if (!value.length) throw new InputError("Gemini didn't return any destinations. Try again.", 502);
+    if (!value.length) throw new InputError("Gemini didn't return any destinations. Try again.", 503);
     db.kvPut("whereNext", { key, value });
     return value;
   }

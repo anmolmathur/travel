@@ -21,7 +21,11 @@ async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: "same-origin", ...opts, headers: { ...(opts.body && typeof opts.body === "string" && !opts.raw ? { "content-type": "application/json" } : {}), ...(opts.headers || {}) } });
   const data = res.headers.get("content-type")?.includes("json") ? await res.json() : await res.text();
   if (res.status === 401 && path !== "/api/login") { showLogin(); }
-  if (!res.ok) throw Object.assign(new Error(data?.error || `Request failed (${res.status})`), { status: res.status });
+  if (!res.ok) {
+    const gateway = [502, 503, 504, 520, 521, 522, 523, 524].includes(res.status);
+    const msg = data?.error || (gateway ? `The connection to the Wander server dropped before it answered (HTTP ${res.status}). Try again in a moment; if it keeps happening, check the server logs.` : `Request failed (${res.status})`);
+    throw Object.assign(new Error(msg), { status: res.status });
+  }
   return data;
 }
 function toast(msg, undo) {

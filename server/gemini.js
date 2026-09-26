@@ -2,43 +2,50 @@
 // The key never leaves the server.
 
 const API = "https://generativelanguage.googleapis.com/v1beta";
-const TIMEOUT_MS = 85_000; // stay under Cloudflare's 100-second limit
+const BUDGET_MS = 85_000; // every attempt for one request together stays under Cloudflare's 100-second limit
 
-const fail = (message, status = 502) => Object.assign(new Error(message), { status });
+// 503, not 502: a 502 reads as "the proxy couldn't reach Wander", and some proxies swap in their own error page.
+const fail = (message, status = 503) => Object.assign(new Error(message), { status });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** Google answers 503/500 ("high demand", "overloaded") when a model is busy; that passes, so retry or switch model. */
+const isBusy = (status, msg) => status === 503 || status === 500 || /high demand|overloaded|temporarily unavailable/i.test(msg);
 /** Models sometimes wrap a requested array in an object ({"flights": [...]}); unwrap it. */
 export const asArray = out => Array.isArray(out) ? out : out && typeof out === "object" ? (Object.values(out).find(Array.isArray) || []) : [];
 
-/** Picks the newest stable Gemini model of a family ("flash" or "pro") from a ListModels response. */
-export function pickModel(names, family) {
+/** Text models of a family ("flash" or "pro") from a ListModels response, newest stable first. */
+export function rankModels(names, family) {
   const version = n => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
   const ok = names.filter(n => n.startsWith("gemini-") && n.includes(`-${family}`)
-    && !/(lite|tts|image|audio|live|embedding|vision|thinking|computer|robotics|8b)/.test(n));
-  ok.sort((a, b) => version(b) - version(a) || Number(/preview|exp/.test(a)) - Number(/preview|exp/.test(b)) || a.length - b.length);
-  return ok[0] || null;
+    && !/(lite|tts|image|audio|live|embedding|vision|thinking|computer|robotics|omni|transcribe|8b)/.test(n));
+  return ok.sort((a, b) => version(b) - version(a) || Number(/preview|exp/.test(a)) - Number(/preview|exp/.test(b)) || a.length - b.length);
 }
+/** Picks the newest stable Gemini model of a family. */
+export const pickModel = (names, family) => rankModels(names, family)[0] || null;
 
 export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
   if (!apiKey) return null;
   const chosen = { fast: model, smart: smartModel || model };
   const headers = { "content-type": "application/json", "x-goog-api-key": apiKey };
 
-  async function request(url, init) {
-    try { return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
+  async function request(url, init, deadline = Date.now() + BUDGET_MS) {
+    const left = deadline - Date.now();
+    if (left < 1000) throw fail("Gemini took too long to answer. Try again in a minute.", 504);
+    try { return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(left) }); }
     catch (e) {
       if (e?.name === "TimeoutError" || e?.name === "AbortError") throw fail("Gemini took too long to answer. Try again, or set GEMINI_MODEL_SMART to a faster model.", 504);
       throw fail(`Couldn't reach Gemini (${e?.cause?.code || e?.message || "network error"}).`);
     }
   }
 
-  async function listModels() {
-    const res = await request(`${API}/models?pageSize=1000`, { headers });
+  async function listModels(deadline) {
+    const res = await request(`${API}/models?pageSize=1000`, { headers }, deadline);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw fail(`Gemini rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`);
+    if (!res.ok) throw fail(`Gemini rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 502);
     return (data.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => m.name.replace(/^models\//, ""));
   }
 
-  async function post(m, body) {
-    const res = await request(`${API}/models/${encodeURIComponent(m)}:generateContent`, { method: "POST", headers, body: JSON.stringify(body) });
+  async function post(m, body, deadline) {
+    const res = await request(`${API}/models/${encodeURIComponent(m)}:generateContent`, { method: "POST", headers, body: JSON.stringify(body) }, deadline);
     return { res, data: await res.json().catch(() => ({})) };
   }
 
@@ -49,23 +56,40 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
       generationConfig: { temperature, ...(json ? { responseMimeType: "application/json" } : {}) },
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     };
-    let { res, data } = await post(chosen[slot], body);
+    const deadline = Date.now() + BUDGET_MS;
+    let used = chosen[slot];
+    let { res, data } = await post(used, body, deadline);
     const msg = data?.error?.message || "";
     // The configured model may have been renamed or retired: find the current one and retry once.
     if (res.status === 404 || (res.status === 400 && /not (found|supported)|unknown model|is not available/i.test(msg))) {
-      const names = await listModels();
+      const names = await listModels(deadline);
       const alt = pickModel(names, useSmart ? "pro" : "flash") || pickModel(names, "flash");
       if (alt && alt !== chosen[slot]) {
         console.warn(`Gemini model "${chosen[slot]}" is unavailable (${msg || res.status}); using "${alt}". Set GEMINI_MODEL${useSmart ? "_SMART" : ""}=${alt} to silence this.`);
-        chosen[slot] = alt;
-        ({ res, data } = await post(alt, body));
+        chosen[slot] = used = alt;
+        ({ res, data } = await post(alt, body, deadline));
+      }
+    }
+    // A busy model: one short retry, then the next Flash models that are up. The configured model stays the default.
+    if (!res.ok && isBusy(res.status, data?.error?.message || "")) {
+      await sleep(1500);
+      ({ res, data } = await post(used, body, deadline));
+      if (!res.ok && isBusy(res.status, data?.error?.message || "")) {
+        const alts = rankModels(await listModels(deadline), "flash").filter(n => n !== used).slice(0, 3);
+        for (const alt of alts) {
+          const r = await post(alt, body, deadline);
+          if (r.res.ok) console.warn(`Gemini model "${used}" is busy; answered with "${alt}".`);
+          ({ res, data } = r); used = alt;
+          if (res.ok || !isBusy(res.status, data?.error?.message || "")) break;
+        }
       }
     }
     if (!res.ok) {
       const m = data?.error?.message || `HTTP ${res.status}`;
       if (res.status === 429) throw fail(`Gemini rate limit or quota reached: ${m}`, 429);
-      if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`);
-      throw fail(`Gemini error (${chosen[slot]}): ${m}`);
+      if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`, 502);
+      if (isBusy(res.status, m)) throw fail(`Gemini is overloaded right now (tried ${used} and other Flash models). Try again in a minute.`);
+      throw fail(`Gemini error (${used}): ${m}`);
     }
     const cand = data.candidates?.[0];
     const text = (cand?.content?.parts || []).filter(p => !p.thought).map(p => p.text || "").join("").trim();
