@@ -38,6 +38,8 @@ export const TOOLS = [
   { name: "restore_flight", description: "Undo mark_not_flown.", inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
   { name: "delete_flight", description: "Permanently delete a flight entered by mistake. Prefer mark_not_flown for flights that were booked but not taken.",
     inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] }, annotations: { destructiveHint: true } },
+  { name: "replace_airport", description: "Swap an airport code on every flight that uses it (or only the given flight ids), for example when HKT (Phuket) was picked by mistake for HKG (Hong Kong). Distances are recalculated.",
+    inputSchema: { type: "object", properties: { from: { type: "string", description: "Wrong IATA code" }, to: { type: "string", description: "Correct IATA code" }, ids: { type: "array", items: { type: "string" } } }, required: ["from", "to"] } },
   { name: "get_stats", description: "Lifetime or single-year statistics: flights, km, time in air, airports, countries, airlines, top routes, flights per year.",
     inputSchema: { type: "object", properties: { year: { type: "string" } } }, annotations: { readOnlyHint: true } },
   { name: "review_queue", description: "Flights that were probably not flown: codeshares logged twice, duplicates, rebookings, itineraries that don't connect.",
@@ -46,7 +48,7 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: { flight: { type: "string" }, date: { type: "string" } }, required: ["flight", "date"] }, annotations: { readOnlyHint: true } },
 ];
 
-const WRITE_TOOLS = new Set(["add_flight", "add_flights", "update_flight", "mark_not_flown", "restore_flight", "delete_flight"]);
+const WRITE_TOOLS = new Set(["replace_airport", "add_flight", "add_flights", "update_flight", "mark_not_flown", "restore_flight", "delete_flight"]);
 
 export async function handleMcp(message, { service, canWrite }) {
   const reply = result => ({ jsonrpc: "2.0", id: message.id, result });
@@ -101,6 +103,7 @@ async function callTool(name, a, service) {
     case "mark_not_flown": return slim(service.patch(a.id, { status: "cancelled" }));
     case "restore_flight": return slim(service.patch(a.id, { status: "flown" }));
     case "delete_flight": return service.remove(a.id);
+    case "replace_airport": return service.replaceAirport(a.from, a.to, a.ids);
     case "get_stats": return service.stats(a.year);
     case "review_queue": return service.reviewQueue();
     case "lookup_flight": return service.lookup(a.flight, a.date);

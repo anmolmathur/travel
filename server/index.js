@@ -87,6 +87,7 @@ export function buildApp(env = process.env) {
     if (m && method === "PUT") { needWrite(); return send(res, 200, service.replace(m[1], await readJSON(req))); }
     if (m && method === "PATCH") { needWrite(); return send(res, 200, service.patch(m[1], await readJSON(req))); }
     if (m && method === "DELETE") { needWrite(); return send(res, 200, service.remove(m[1])); }
+    if (path === "/api/airports/replace" && method === "POST") { needWrite(); const b = await readJSON(req); return send(res, 200, service.replaceAirport(b.from, b.to, b.ids)); }
     if (path === "/api/import" && method === "POST") { needWrite(); return send(res, 200, service.importCSV(await readBody(req, 5 * 1024 * 1024))); }
     if (path === "/api/export.csv") {
       needRead();

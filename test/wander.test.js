@@ -158,4 +158,20 @@ test("smart tasks fall back to the fast model when the pro model has no quota", 
     : { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: "You flew to Delhi 32 times." }] } }] }) };
   const g = createGemini({ apiKey: "k", model: "gemini-flash-latest", smartModel: "gemini-pro-latest", fetchImpl: fake });
   assert.match(await g.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /32 times/);
+test("replacing an airport fixes every matching flight and can be undone by id", async () => {
+  await withServer({}, async base => {
+    const post = (path, body) => fetch(base + path, { method: "POST", body: JSON.stringify(body) }).then(r => r.json());
+    await post("/api/flights", { date: "2023-03-18", from: "BOM", to: "HKT", flight: "G821" });
+    await post("/api/flights", { date: "2023-03-19", from: "HKT", to: "BOM", flight: "G822" });
+    await post("/api/flights", { date: "2018-09-26", from: "BOM", to: "HKG", flight: "CX660" });
+    const r = await post("/api/airports/replace", { from: "HKT", to: "HKG" });
+    assert.equal(r.replaced, 2);
+    const { flights } = await (await fetch(base + "/api/flights")).json();
+    assert.equal(flights.filter(f => f.from === "HKG" || f.to === "HKG").length, 3);
+    assert.ok(flights.find(f => f.flight === "G821").distanceKm > 4000, "distance recalculated for Hong Kong");
+    const undo = await post("/api/airports/replace", { from: "HKG", to: "HKT", ids: r.ids });
+    assert.equal(undo.replaced, 2, "undo only touches the flights that were changed");
+    const bad = await fetch(base + "/api/airports/replace", { method: "POST", body: JSON.stringify({ from: "HKT", to: "BOM" }) });
+    assert.equal(bad.status, 400);
+  });
 });
