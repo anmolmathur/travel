@@ -1,9 +1,9 @@
 /* global d3, topojson */
 import {
   createRef, computeStats, computeFlags, statusOf, durMin, hm, estDur, hav, fnPretty, niceDate, airlineName, planeName, countryName,
-  validate, DEFUNCT, CABINS, REASONS, MONTHS, todayISO, dayDiff,
+  validate, DEFUNCT, CABINS, REASONS, MONTHS, todayISO, dayDiff, MODES, MODE_INFO, modeOf, isAir, legName, legKm,
 } from "./lib/core.js";
-import { createGlobe } from "./globe.js";
+import { createGlobe, GROUND_STYLE } from "./globe.js";
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -140,8 +140,8 @@ function drawGlobeData() {
   const list = visible().filter(f => statusOf(f) !== "cancelled");
   const routes = new Map(), counts = new Map();
   for (const f of list) {
-    const up = statusOf(f) === "upcoming", key = [f.from, f.to].sort().join("-") + (up ? "u" : "");
-    const r = routes.get(key) || { a: ap(f.from), b: ap(f.to), n: 0, up, ids: [], first: f.date, km: f.distanceKm || 0 };
+    const up = statusOf(f) === "upcoming", mode = modeOf(f), key = [f.from, f.to].sort().join("-") + (up ? "u" : "") + mode;
+    const r = routes.get(key) || { a: ap(f.from), b: ap(f.to), n: 0, up, mode, ids: [], first: f.date, km: f.distanceKm || 0 };
     r.n++; r.ids.push(f.id); if (f.date < r.first) r.first = f.date; routes.set(key, r);
     for (const c of [f.from, f.to]) { const x = counts.get(c) || { n: 0, ids: [] }; x.n++; x.ids.push(f.id); counts.set(c, x); }
   }
@@ -152,6 +152,9 @@ function drawGlobeData() {
     airports: [...counts.entries()].map(([c, x]) => ({ a: ap(c), n: x.n, ids: x.ids })).filter(d => d.a),
     visited: visitedIds, home: tripData.home || s.home,
   });
+  const modes = MODES.filter(m => m !== "air" && list.some(f => modeOf(f) === m));
+  const lg = $("#legend"); lg.hidden = !modes.length;
+  lg.innerHTML = modes.map(m => `<span><i style="background:repeating-linear-gradient(90deg,${GROUND_STYLE[m].color} 0 ${GROUND_STYLE[m].dash[0]}px,transparent 0 ${GROUND_STYLE[m].dash[0] + GROUND_STYLE[m].dash[1]}px)"></i>${MODE_INFO[m].label}</span>`).join("");
   if (!drawGlobeData.done && s.home) { drawGlobeData.done = true; const h = ap(s.home); globe.focusPoints([[h.lon, h.lat]], 10); }
 }
 
@@ -168,13 +171,15 @@ function hero() {
   const days = s.min / 1440;
   const who = PEOPLE.length < 2 || ui.person === "me" ? "" : ui.person === "all" ? "Family · " : `${pName(ui.person)} · `;
   $("#heroEyebrow").textContent = who + (ui.year === "all" ? (s.first ? `Since ${MONTHS[+s.first.date.slice(5, 7) - 1]} ${s.first.date.slice(0, 4)}` : "Flights") : `In ${ui.year}`);
-  $("#heroSub").innerHTML = s.n ? `<b>${(s.km / 40075).toFixed(1)}×</b> around the Earth, and <b>${days >= 1 ? days.toFixed(1) + " days" : hm(s.min) + " hours"}</b> in the air.` : "Nothing flown in this view yet.";
-  const up = list.filter(f => statusOf(f) === "upcoming").length;
+  const land = Object.entries(s.ground.by).sort((a, b) => b[1].km - a[1].km).map(([m]) => MODE_INFO[m].label.toLowerCase());
+  const byLand = land.length ? `, plus <b>${fmt(s.ground.km)} km</b> by ${land.length > 1 ? land.slice(0, -1).join(", ") + " & " + land.at(-1) : land[0]}` : "";
+  $("#heroSub").innerHTML = s.n ? `<b>${(s.km / 40075).toFixed(1)}×</b> around the Earth, and <b>${days >= 1 ? days.toFixed(1) + " days" : hm(s.min) + " hours"}</b> in the air${byLand}.` : "Nothing flown in this view yet.";
+  const up = list.filter(f => statusOf(f) === "upcoming" && isAir(f)).length;
   $("#heroStats").innerHTML = [["Flights", s.n], ["Airports", s.airports.size], ["Countries", s.countries.size], [up ? "Upcoming" : "Airlines", up || s.carriers.size]]
     .map(([k, v]) => `<div class="stat"><b>${fmt(v)}</b><span>${k}</span></div>`).join("");
 }
 function years() {
-  const base = flights.filter(f => (ui.airline === "all" || f.airline === ui.airline) && statusOf(f) !== "cancelled");
+  const base = flights.filter(f => isAir(f) && (ui.airline === "all" || f.airline === ui.airline) && statusOf(f) !== "cancelled");
   const ys = base.map(f => +f.date.slice(0, 4)); if (!ys.length) { $("#years").innerHTML = ""; return; }
   const range = d3.range(Math.min(...ys), Math.max(...ys, +TODAY.slice(0, 4)) + 1);
   const cnt = new Map(range.map(y => [y, { f: 0, u: 0 }]));
@@ -199,7 +204,7 @@ function tip(h) {
   const t = $("#tip");
   if (!h) { t.hidden = true; return; }
   if (h.kind === "airport") { const d = h.data; t.innerHTML = `<b>${d.a.code}</b> ${esc(d.a.city || "")}<br>${esc(d.a.name)}<br>${d.n} visit${d.n > 1 ? "s" : ""}`; }
-  else { const r = h.data; t.innerHTML = `<b>${r.a.code} ⇄ ${r.b.code}</b><br>${esc(r.a.city)} – ${esc(r.b.city)}<br>${r.n} flight${r.n > 1 ? "s" : ""} · ${fmt(hav(r.a, r.b))} km${r.up ? " · upcoming" : ""}`; }
+  else { const r = h.data; t.innerHTML = `<b>${r.a.code} ⇄ ${r.b.code}</b><br>${esc(r.a.city)} – ${esc(r.b.city)}<br>${r.mode === "air" ? "" : MODE_INFO[r.mode].icon + " "}${r.n} ${r.mode === "air" ? "flight" : MODE_INFO[r.mode].label.toLowerCase() + " journey"}${r.n > 1 ? "s" : ""} · ${fmt(r.mode === "air" ? hav(r.a, r.b) : r.km)} km${r.up ? " · upcoming" : ""}`; }
   t.hidden = false;
   const wrap = $("#globeWrap").getBoundingClientRect();
   t.style.left = Math.min(h.x + 14, wrap.width - t.offsetWidth - 6) + "px"; t.style.top = Math.max(6, h.y - t.offsetHeight - 10) + "px";
@@ -246,12 +251,12 @@ function miniArc(a, b) {
 }
 function renderOverview() {
   const el = $("#p-overview"), list = visible(), fl = flown(list), s = computeStats(fl, REF);
-  if (!fl.length) { el.innerHTML = emptyState(); return; }
+  if (!s.n) { el.innerHTML = emptyState(); return; }
   const countries = [...s.countries.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  const visits = new Map(); fl.forEach(f => new Set([ap(f.from)?.cc, ap(f.to)?.cc]).forEach(cc => cc && visits.set(cc, (visits.get(cc) || 0) + 1)));
+  const visits = new Map(); fl.filter(isAir).forEach(f => new Set([ap(f.from)?.cc, ap(f.to)?.cc]).forEach(cc => cc && visits.set(cc, (visits.get(cc) || 0) + 1)));
   const homeCC = ap(s.home)?.cc;
   const stamps = countries.map(([cc, d], i) => `<div class="stamp${i % 3 === 2 ? " sq" : ""}" style="--ink-c:${INKS[i % INKS.length]};--rot:${((i * 37) % 13) - 6}deg">
-      ${flag(cc)}<b>${esc(countryName(REF, cc))}</b><span>${MONTHS[+d.slice(5, 7) - 1].toUpperCase()} ${d.slice(0, 4)}</span><small>${cc === homeCC ? "home" : `${visits.get(cc) || 0} flight${visits.get(cc) === 1 ? "" : "s"}`}</small></div>`).join("");
+      ${flag(cc)}<b>${esc(countryName(REF, cc))}</b><span>${MONTHS[+d.slice(5, 7) - 1].toUpperCase()} ${d.slice(0, 4)}</span><small>${cc === homeCC ? "home" : visits.get(cc) ? `${visits.get(cc)} flight${visits.get(cc) === 1 ? "" : "s"}` : "overland"}</small></div>`).join("");
   const rec = (label, big, sub, arc) => `<div class="card rec"><h3>${label}</h3><div class="big">${big}</div><p>${sub}</p>${arc || ""}</div>`;
   const R = f => f ? `<span class="mono">${f.from}→${f.to}</span>` : "—";
   const als = [...s.carriers.entries()].sort((a, b) => b[1] - a[1]);
@@ -280,6 +285,7 @@ function renderOverview() {
     <div class="card"><h3>Distance</h3><dl class="kv"><dt>Total flown</dt><dd>${fmt(s.km)} km</dd><dt>Around the world</dt><dd>${(s.km / 40075).toFixed(2)}×</dd><dt>To the Moon</dt><dd>${(s.km / 384400).toFixed(3)}×</dd><dt>To Mars</dt><dd>${(s.km / 56e6).toFixed(4)}×</dd><dt>Average flight</dt><dd>${fmt(s.km / s.n)} km <small>· ${hm(s.min / s.n)}</small></dd></dl></div>
     <div class="card"><h3>Seat & cabin</h3>${meter(s.seat, ["window", "middle", "aisle", "unknown"], C5.slice(0, 3).concat(C5[4]), ["Window", "Middle", "Aisle", "Not recorded"])}${meter(s.cabin, CABINS, C5, ["Economy", "Premium", "Business", "First"])}</div>
     <div class="card"><h3>Reason & reach</h3>${meter(s.reason, REASONS, C5, ["Leisure", "Business", "Crew", "Other"])}${meter({ d: s.dom, i: s.intl }, ["d", "i"], C5, ["Domestic", "International"])}</div>
+    ${s.ground.n ? `<div class="card"><h3>On the ground</h3><dl class="kv">${Object.entries(s.ground.by).sort((a, b) => b[1].n - a[1].n).map(([m, g]) => `<dt>${MODE_INFO[m].icon} ${MODE_INFO[m].label}</dt><dd>${g.n} · ${fmt(g.km)} km <small>· ${hm(g.min)}</small></dd>`).join("")}<dt>Share of distance</dt><dd>${Math.round(s.ground.km / (s.ground.km + s.km) * 100)}%</dd></dl><p class="muted small">Not counted in the flight figures above. Road and rail distances are estimates unless you enter them.</p></div>` : ""}
   </div></div>`;
   const nb = $("#nextBtn"); if (nb) nb.onclick = whereNext;
 }
@@ -328,13 +334,18 @@ function renderTrips() {
     return `<div class="tl-year"><h3>${y}</h3><span class="meta">${list.length} trip${list.length > 1 ? "s" : ""} · ${abroad} abroad · ${fmt(km)} km</span>${me.features?.ai ? `<button class="btn small" type="button" data-story="${y}"><span class="spark">✦</span> ${y} in review</button>` : ""}</div>` +
     list.map(t => {
       const legs = t.flights.map(id => flights.find(f => f.id === id)).filter(Boolean);
-      const chain = legs.map((f, i) => `${i === 0 ? `<b>${f.from}</b>` : f.from !== legs[i - 1].to ? `<i title="Leg not logged">⋯</i><b>${f.from}</b>` : ""}<i>→</i><b>${f.to}</b>`).join("");
+      const hop = f => isAir(f) ? "<i>→</i>" : `<i class="gm" title="${esc(legName(f))}">${MODE_INFO[modeOf(f)].icon}</i>`;
+      // Two airports of one city (Malpensa and Linate) join up: a train from Linate continues a flight into Malpensa.
+      const joined = (a, b) => a === b || (ap(a) && ap(b) && hav(ap(a), ap(b)) < 80);
+      const chain = legs.map((f, i) => `${i === 0 ? `<b>${f.from}</b>` : f.from !== legs[i - 1].to ? `${joined(f.from, legs[i - 1].to) ? "<i>·</i>" : '<i title="Leg not logged">⋯</i>'}<b>${f.from}</b>` : ""}${hop(f)}<b>${f.to}</b>`).join("");
+      const nAir = legs.filter(isAir).length, byMode = MODES.filter(m => m !== "air").map(m => [m, legs.filter(f => modeOf(f) === m).length]).filter(([, n]) => n);
+      const legCount = [nAir ? `${nAir} flight${nAir > 1 ? "s" : ""}` : "", ...byMode.map(([m, n]) => `${n} ${MODE_INFO[m].label.toLowerCase()}${n > 1 && m !== "ferry" ? "s" : ""}`)].filter(Boolean).join(" · ");
       return `<article class="trip${ui.trip === t.id ? " sel" : ""}" data-trip="${esc(t.id)}" tabindex="0">
         ${tripSvg(t)}
         <div><div class="when">${t.when.toUpperCase()} · ${t.days} DAY${t.days > 1 ? "S" : ""}${t.upcoming ? ' · <span class="tag up">upcoming</span>' : ""}</div>
           <h4>${esc(t.ai?.name || t.name)}</h4>${t.ai?.summary ? `<p class="sum">${esc(t.ai.summary)}</p>` : ""}<div class="chain">${chain}</div>
         ${me.canWrite && PEOPLE.length > 1 ? `<div class="who-row"><span class="muted">Who went</span>${PEOPLE.map(p => `<button type="button" class="who-tog" data-who="${esc(p.id)}" data-tripid="${esc(t.id)}" aria-pressed="${legs.every(f => whoOf(f).includes(p.id))}" style="--pc:${pColor(p.id)}">${avatar(p.id, true)}${esc(p.name)}</button>`).join("")}</div>` : ""}</div>
-        <div class="side"><span class="km">${fmt(t.km)} <small class="muted">km</small></span><span class="flags">${t.countries.filter(c => c !== ap(tripData.home)?.cc).slice(0, 5).map(c => flag(c, 20)).join("")}</span><span class="muted">${legs.length} flight${legs.length > 1 ? "s" : ""}</span></div>
+        <div class="side"><span class="km">${fmt(t.km)} <small class="muted">km</small></span><span class="flags">${t.countries.filter(c => c !== ap(tripData.home)?.cc).slice(0, 5).map(c => flag(c, 20)).join("")}</span><span class="muted">${legCount}</span></div>
       </article>`;
     }).join("");
   }).join("")}</div>`;
@@ -421,7 +432,7 @@ function renderTable() {
     if (ui.status === "flagged" && !FLAGS.has(f.id)) return false;
     if (!["all", "flagged", "cancelled", "unassigned"].includes(ui.status) && statusOf(f) !== ui.status) return false;
     if (!terms.length) return true;
-    const hay = [f.date, f.flight, fnPretty(f), f.from, f.to, ap(f.from)?.city, ap(f.to)?.city, airlineName(REF, f.airline), f.aircraft, planeName(REF, f.aircraft), f.seat, f.trip, f.note, f.registration].join(" ").toLowerCase();
+    const hay = [f.date, f.flight, fnPretty(f), modeOf(f), MODE_INFO[modeOf(f)].label, f.operator, f.from, f.to, ap(f.from)?.city, ap(f.to)?.city, airlineName(REF, f.airline), f.aircraft, planeName(REF, f.aircraft), f.seat, f.trip, f.note, f.registration].join(" ").toLowerCase();
     return terms.every(t => hay.includes(t));
   });
   list.sort((a, b) => { const x = sortVal(a, ui.sort), y = sortVal(b, ui.sort); return (x > y ? 1 : x < y ? -1 : 0) * ui.dir || b.date.localeCompare(a.date); });
@@ -429,12 +440,12 @@ function renderTable() {
   $("#tbody").innerHTML = shown.length ? shown.map(f => {
     const st = statusOf(f), fl = FLAGS.get(f.id);
     return `<tr data-id="${esc(f.id)}" class="${st === "cancelled" ? "cx" : ""}${ui.sel === f.id ? " sel" : ""}">
-      <td class="mono">${f.date}</td><td class="mono">${esc(fnPretty(f))}</td><td class="route"><b>${f.from}</b><i>→</i><b>${f.to}</b></td>
-      <td><span class="al-cell"><img src="https://pics.avs.io/120/48/${esc(f.airline)}.png" alt="" loading="lazy" data-fb="img">${esc(airlineName(REF, f.airline))}</span></td>
+      <td class="mono">${f.date}</td><td class="mono">${isAir(f) ? esc(fnPretty(f)) : `<span class="gm" title="${MODE_INFO[modeOf(f)].label}">${MODE_INFO[modeOf(f)].icon}</span> ${esc(f.flight || MODE_INFO[modeOf(f)].label)}`}</td><td class="route"><b>${f.from}</b><i>${isAir(f) ? "→" : MODE_INFO[modeOf(f)].icon}</i><b>${f.to}</b></td>
+      <td>${isAir(f) ? `<span class="al-cell"><img src="https://pics.avs.io/120/48/${esc(f.airline)}.png" alt="" loading="lazy" data-fb="img">${esc(airlineName(REF, f.airline))}</span>` : `<span class="muted">${esc(f.operator || MODE_INFO[modeOf(f)].label)}</span>`}</td>
       <td class="r mono">${fmt(f.distanceKm || 0)}</td><td class="r mono">${hm(durMin(f))}</td><td class="mono" title="${esc(planeName(REF, f.aircraft))}">${esc(f.aircraft || "")}</td><td class="mono">${esc(f.seat || "")}</td>
       <td><span class="whos">${whoOf(f).map(id => avatar(id, true)).join("") || '<span class="tag warn">unassigned</span>'}</span></td>
-      <td class="st">${st === "cancelled" ? '<span class="tag warn">not flown</span>' : st === "upcoming" ? '<span class="tag up">upcoming</span>' : '<span class="tag ok">flown</span>'}${fl ? `<span class="dot" title="${esc(fl[0].msg)}"></span>` : ""}</td>
-      <td class="act owner-only">${st === "cancelled" ? '<button class="btn small" data-a="restore" type="button">Restore</button>' : '<button class="btn small" data-a="cancel" type="button" title="Booked but not flown">Not flown</button>'}
+      <td class="st">${st === "cancelled" ? `<span class="tag warn">${isAir(f) ? "not flown" : "not taken"}</span>` : st === "upcoming" ? '<span class="tag up">upcoming</span>' : `<span class="tag ok">${isAir(f) ? "flown" : "travelled"}</span>`}${fl ? `<span class="dot" title="${esc(fl[0].msg)}"></span>` : ""}</td>
+      <td class="act owner-only">${st === "cancelled" ? '<button class="btn small" data-a="restore" type="button">Restore</button>' : `<button class="btn small" data-a="cancel" type="button" title="Booked but not taken">${isAir(f) ? "Not flown" : "Not taken"}</button>`}
         <button class="btn small ghost" data-a="edit" type="button">Edit</button>${ui.confirmDel === f.id ? '<button class="btn small danger" data-a="del2" type="button">Confirm</button>' : '<button class="btn small ghost danger" data-a="del" type="button" aria-label="Delete">✕</button>'}</td></tr>`;
   }).join("") : `<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--ink-3)">No flights match.</td></tr>`;
   $("#more").innerHTML = list.length > ui.limit ? `<button class="btn" id="moreBtn" type="button">Show ${Math.min(100, list.length - ui.limit)} more</button>` : `<span class="muted">${list.length} flight${list.length === 1 ? "" : "s"}</span>`;
@@ -445,7 +456,7 @@ async function act(id, a) {
   const f = flights.find(x => x.id === id); if (!f) return;
   const patch = async body => { const doc = await api(`/api/flights/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }); Object.assign(f, doc); };
   try {
-    if (a === "cancel") { await patch({ status: "cancelled" }); toast(`${fnPretty(f) || f.from + "→" + f.to} marked not flown`, () => act(id, "restore")); }
+    if (a === "cancel") { await patch({ status: "cancelled" }); toast(`${legName(f) || f.from + "→" + f.to} marked not ${isAir(f) ? "flown" : "taken"}`, () => act(id, "restore")); }
     else if (a === "restore") { await patch({ status: "flown" }); toast("Flight restored"); }
     else if (a === "keep") { await patch({ reviewed: true }); toast("Kept as flown", () => patch({ reviewed: false }).then(render)); }
     else if (a === "edit") { loadForm(f); go("add"); return; }
@@ -473,7 +484,7 @@ function renderReview() {
       ${PEOPLE.length > 1 ? `<button class="btn small" type="button" data-assign="${esc(PEOPLE.map(p => p.id).join(","))}">Everyone</button>` : ""}
       <button class="btn small ghost" type="button" data-assign-cancel>None of us flew these</button></div>` : "";
     return `<div class="rvg ${g.sev === "high" ? "high" : g.sev === "low" ? "low" : ""}"><p class="eyebrow">${sevName[g.sev]}${g.person && PEOPLE.length > 1 ? `<span class="person-tag">${esc(pName(g.person))}</span>` : ""}</p><h4>${esc(g.title)}</h4><p>${esc(g.msg)}</p>${assign}
-    ${g.items.map(f => `<div class="rvrow" data-id="${esc(f.id)}"><span class="mono">${f.date}</span><b class="mono">${esc(fnPretty(f))}</b><span class="mono">${f.from} → ${f.to}</span><span>${esc(airlineName(REF, f.airline))}</span>
+    ${g.items.map(f => `<div class="rvrow" data-id="${esc(f.id)}"><span class="mono">${f.date}</span><b class="mono">${esc(legName(f))}</b><span class="mono">${f.from} → ${f.to}</span><span>${esc(isAir(f) ? airlineName(REF, f.airline) : f.operator || "")}</span>
       <span class="sp">${g.suggest === f.id ? '<span class="tag warn">suggested</span>' : ""}<span class="owner-only"><button class="btn small" data-a="cancel" type="button">Not flown</button>${g.kind === "unassigned" ? "" : ' <button class="btn small ghost" data-a="keep" type="button">Flown</button>'}</span></span></div>`).join("")}</div>`;
   }).join("")}</div>`;
 }
@@ -490,36 +501,53 @@ function fillFilters() {
 }
 function formVals() {
   const v = id => $(id).value.trim();
-  return { date: v("#iDate"), time: v("#iTime"), flight: v("#iFlight").replace(/\s+/g, "").toUpperCase(), from: v("#iFrom").slice(0, 3).toUpperCase(), to: v("#iTo").slice(0, 3).toUpperCase(),
+  const mode = v("#iMode") || "air", ground = mode !== "air";
+  return { mode, operator: ground ? v("#iOperator") : "", distanceKm: ground && +v("#iDist") > 0 ? +v("#iDist") : undefined,
+    date: v("#iDate"), time: v("#iTime"), flight: v("#iFlight").replace(/\s+/g, "").toUpperCase(), from: v("#iFrom").slice(0, 3).toUpperCase(), to: v("#iTo").slice(0, 3).toUpperCase(),
     duration: v("#iDur"), aircraft: v("#iAircraft").toUpperCase(), seat: v("#iSeat").toUpperCase(), seatType: v("#iSeatType"), cabin: v("#iCabin"), reason: v("#iReason"),
     registration: v("#iReg").toUpperCase(), trip: v("#iTrip"), note: v("#iNote"), travellers: $$("#iWho input:checked").map(i => i.value) };
 }
+function setFormMode(mode) {
+  const ground = mode !== "air", m = MODE_INFO[mode];
+  $("#form").classList.toggle("ground", ground);
+  $$("#iModes button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+  $("#iMode").value = mode;
+  $("#lFlight").textContent = ground ? (mode === "car" ? "Reference (optional)" : `${m.label} number (optional)`) : "Flight number";
+  $("#iFlight").placeholder = ground ? (mode === "train" ? "12951" : "") : "6E 5297";
+  $("#lWho").textContent = ground ? "Who travelled" : "Who flew";
+  if (!ui.editing) { $("#formTitle").textContent = ground ? `Log a ${m.label.toLowerCase()} journey` : "Log a flight"; $("#saveBtn").textContent = ground ? "Save journey" : "Save flight"; }
+  formHints();
+}
 function formHints() {
-  const f = formVals(), a = ap(f.from), b = ap(f.to);
-  $("#hFrom").textContent = f.from ? (a ? `${a.city || a.name}, ${countryName(REF, a.cc)}` : "Unknown airport code") : "";
-  $("#hTo").textContent = f.to ? (b ? `${b.city || b.name}, ${countryName(REF, b.cc)}` : "Unknown airport code") : "";
+  const f = formVals(), a = ap(f.from), b = ap(f.to), ground = f.mode !== "air";
+  const place = x => ground ? `${x.city || x.name}, ${countryName(REF, x.cc)} (city anchor)` : `${x.city || x.name}, ${countryName(REF, x.cc)}`;
+  $("#hFrom").textContent = f.from ? (a ? place(a) : "Unknown airport code") : ground ? "Type a city: its airport code stands in for it" : "";
+  $("#hTo").textContent = f.to ? (b ? place(b) : "Unknown airport code") : "";
   const code = f.flight.slice(0, 2);
-  let fh = f.flight.length >= 3 ? (REF.airlines[code] ? airlineName(REF, code) : "Airline code not recognised") : "";
-  const prev = f.flight.length >= 3 && flights.filter(x => x.flight === f.flight).sort((x, y) => y.date.localeCompare(x.date))[0];
+  let fh = !ground && f.flight.length >= 3 ? (REF.airlines[code] ? airlineName(REF, code) : "Airline code not recognised") : "";
+  const prev = !ground && f.flight.length >= 3 && flights.filter(x => x.flight === f.flight).sort((x, y) => y.date.localeCompare(x.date))[0];
   if (prev) fh += ` · flown before: ${prev.from}→${prev.to}`;
   $("#hFlight").textContent = fh;
   if (prev && !f.from && !f.to && !ui.editing) { $("#iFrom").value = prev.from; $("#iTo").value = prev.to; if (!f.aircraft && prev.aircraft) $("#iAircraft").value = prev.aircraft; if (!f.duration && prev.duration) $("#iDur").value = prev.duration; return formHints(); }
-  $("#hDur").textContent = a && b ? `${fmt(hav(a, b))} km · about ${hm(estDur(hav(a, b)))}` : "";
+  const km = a && b ? (f.distanceKm || legKm(a, b, f.mode)) : 0;
+  $("#hDur").textContent = a && b ? `${ground && !f.distanceKm ? "≈ " : ""}${fmt(km)} km · about ${hm(estDur(km, f.mode))}` : "";
+  $("#hDist").textContent = ground && a && b && !f.distanceKm ? `Blank: estimated as ${fmt(legKm(a, b, f.mode))} km (straight line + 20%)` : "";
   $("#hAircraft").textContent = f.aircraft ? planeName(REF, f.aircraft) : "";
 }
-function resetForm() { $("#form").reset(); ui.editing = null; $("#formTitle").textContent = "Log a flight"; $("#saveBtn").textContent = "Save flight"; $("#formErr").textContent = ""; $("#iDate").value = TODAY; renderWhoPick(defaultWho()); formHints(); }
+function resetForm() { $("#form").reset(); ui.editing = null; $("#formErr").textContent = ""; $("#iDate").value = TODAY; renderWhoPick(defaultWho()); setFormMode("air"); }
 function loadForm(f) {
   resetForm(); ui.editing = f.id || null;
-  if (f.id) { $("#formTitle").textContent = `Edit ${fnPretty(f) || "flight"} · ${f.date}`; $("#saveBtn").textContent = "Save changes"; }
+  if (f.id) { $("#formTitle").textContent = `Edit ${legName(f) || "flight"} · ${f.date}`; $("#saveBtn").textContent = "Save changes"; }
   const set = (id, v) => ($(id).value = v || "");
+  const mode = modeOf(f); set("#iOperator", f.operator); set("#iDist", mode !== "air" && f.distanceKm ? f.distanceKm : "");
   set("#iDate", f.date); set("#iTime", f.time); set("#iFlight", fnPretty(f)); set("#iFrom", f.from); set("#iTo", f.to); set("#iDur", f.duration); set("#iAircraft", f.aircraft); set("#iSeat", f.seat);
   set("#iSeatType", f.seatType); set("#iCabin", f.cabin || "economy"); set("#iReason", f.reason || "leisure"); set("#iReg", f.registration); set("#iTrip", f.trip); set("#iNote", f.note);
   renderWhoPick(Array.isArray(f.travellers) ? f.travellers : defaultWho());
-  formHints();
+  setFormMode(mode);
 }
 async function saveForm(e) {
   e.preventDefault();
-  const f = formVals(), err = validate(f, REF) || (f.travellers.length ? "" : "Choose who flew."); $("#formErr").textContent = err; if (err) return;
+  const f = formVals(), err = validate(f, REF) || (f.travellers.length ? "" : f.mode === "air" ? "Choose who flew." : "Choose who travelled."); $("#formErr").textContent = err; if (err) return;
   const btn = $("#saveBtn"); btn.disabled = true;
   try {
     if (ui.editing) { const old = flights.find(x => x.id === ui.editing); await api(`/api/flights/${encodeURIComponent(ui.editing)}`, { method: "PUT", body: JSON.stringify({ ...f, status: old?.status === "cancelled" ? "cancelled" : undefined, reviewed: old?.reviewed }) }); toast("Changes saved"); }
@@ -562,7 +590,7 @@ async function smartGo() {
 }
 function renderParsed() {
   const ok = parsed.filter(r => !r.error).length;
-  $("#parsed").innerHTML = parsed.map((r, i) => `<div class="pc" data-i="${i}"><span class="mono">${esc(r.date || "no date")}</span><b class="mono">${esc(fnPretty(r))}</b><span class="mono">${esc(r.from)} → ${esc(r.to)}</span>${r.seat ? `<span class="mono">${esc(r.seat)}</span>` : ""}${r.note ? `<span class="muted mono">${esc(r.note)}</span>` : ""}
+  $("#parsed").innerHTML = parsed.map((r, i) => `<div class="pc" data-i="${i}"><span class="mono">${esc(r.date || "no date")}</span><b class="mono">${esc(legName(r))}</b><span class="mono">${esc(r.from)} ${isAir(r) ? "→" : MODE_INFO[modeOf(r)]?.icon || "→"} ${esc(r.to)}</span>${r.seat ? `<span class="mono">${esc(r.seat)}</span>` : ""}${r.note ? `<span class="muted mono">${esc(r.note)}</span>` : ""}
     ${r.error ? `<span class="tag warn" title="${esc(r.error)}">needs fixing</span>` : ""}<span class="sp"><button class="btn small" data-p="edit" type="button">Edit</button>${r.error ? "" : '<button class="btn small primary" data-p="add" type="button">Add</button>'}</span></div>`).join("")
     + (ok > 1 ? `<div class="row"><button class="btn primary" id="addAll" type="button">Add all ${ok}</button></div>` : "");
   const aa = $("#addAll"); if (aa) aa.onclick = async () => { aa.disabled = true; for (let i = parsed.length - 1; i >= 0; i--) if (!parsed[i].error) await addParsed(i, true); toast("Flights added"); await reload(); };
@@ -702,7 +730,8 @@ function wire() {
     const kb = e.target.closest("[data-kind]"); if (kb) { ui.tripKind = kb.dataset.kind; renderTrips(); return; } const s = e.target.closest("[data-story]"); if (s) { story(s.dataset.story); return; } const t = e.target.closest("[data-trip]"); if (t) selectTrip(t.dataset.trip); };
   $("#p-trips").onkeydown = e => { if (e.key === "Enter") { const t = e.target.closest("[data-trip]"); if (t) selectTrip(t.dataset.trip); } };
   $("#form").addEventListener("submit", saveForm);
-  ["#iFlight", "#iFrom", "#iTo", "#iAircraft", "#iDur"].forEach(id => $(id).addEventListener("input", formHints));
+  ["#iFlight", "#iFrom", "#iTo", "#iAircraft", "#iDur", "#iDist"].forEach(id => $(id).addEventListener("input", formHints));
+  $$("#iModes button").forEach(b => (b.onclick = () => setFormMode(b.dataset.mode)));
   $("#resetBtn").onclick = resetForm; $("#lookupBtn").onclick = lookup;
   $("#importBtn").onclick = () => $("#importFile").click();
   $("#importFile").onchange = async e => {

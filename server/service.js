@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   normalize, validate, toDoc, newId, statusOf, computeStats, computeFlags, buildTrips, fromOpenFlightsCSV,
   toOpenFlightsCSV, flightsAsText, todayISO, airlineName, countryName, hm, travellersOf, cleanTravellers, forPerson, slug,
+  isAir, modeOf, MODE_INFO,
 } from "../public/lib/core.js";
 
 export class InputError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
@@ -66,7 +67,9 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
   }
   function replace(id, input) {
     const old = db.get(id); if (!old) throw new InputError("No flight with that id.", 404);
-    const f = normalize({ ...input }, ref);
+    const moved = ["from", "to", "mode"].some(k => k in input && String(input[k] ?? "").toUpperCase() !== String(old[k] ?? "").toUpperCase());
+    // A ground leg's stored distance belongs to its old ends: recompute it when the ends or the mode change.
+    const f = normalize(moved && Number(input.distanceKm) === Number(old.distanceKm) ? { ...input, distanceKm: undefined } : { ...input }, ref);
     const err = validate(f, ref); if (err) throw new InputError(err);
     const doc = toDoc(f, ref, { source: old.source || "manual", createdAt: old.createdAt, reviewed: input.reviewed ?? old.reviewed,
       travellers: checkTravellers(cleanTravellers(input.travellers)) ?? travellersOf(old) }, today());
@@ -107,14 +110,15 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
     if (error) throw new InputError(error);
     const known = people(), newIds = [...new Set(flights.flatMap(f => f.travellers || []))].filter(id => !known.some(p => p.id === id));
     if (newIds.length) db.kvPut("people", [...known, ...newIds.map(id => ({ id, name: id[0].toUpperCase() + id.slice(1) }))]);
-    const existing = new Set(all().map(f => `${f.date}|${f.from}|${f.to}|${f.flight}`));
+    const keyOf = f => `${f.date}|${f.from}|${f.to}|${f.flight}${isAir(f) ? "" : "|" + modeOf(f)}`;
+    const existing = new Set(all().map(keyOf));
     const entries = []; let skipped = 0; const bad = [];
     flights.forEach((raw, i) => {
       const f = normalize(raw, ref);
       if (f.duration && !/^\d{1,2}:\d{2}$/.test(f.duration)) f.duration = "";
       const err = validate(f, ref);
       if (err) { bad.push({ row: i + 2, error: err }); return; }
-      const key = `${f.date}|${f.from}|${f.to}|${f.flight}`;
+      const key = keyOf(f);
       if (existing.has(key)) { skipped++; return; }
       existing.add(key);
       const doc = toDoc(f, ref, { source: "import", createdAt: new Date().toISOString(), travellers: f.travellers ?? ["me"] }, today());
@@ -124,7 +128,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
     return { added: entries.length, skipped, failed: bad.length, errors: bad.slice(0, 20) };
   }
 
-  function query({ year, from, to, airport, airline, status, traveller, q, limit = 50 } = {}) {
+  function query({ year, from, to, airport, airline, status, traveller, mode, q, limit = 50 } = {}) {
     let list = traveller ? (traveller === "unassigned" ? all().filter(f => !travellersOf(f).length) : forPerson(all(), slug(traveller))) : all();
     if (year) list = list.filter(f => f.date.startsWith(String(year)));
     if (from) list = list.filter(f => f.from === String(from).toUpperCase());
@@ -132,6 +136,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
     if (airport) { const a = String(airport).toUpperCase(); list = list.filter(f => f.from === a || f.to === a); }
     if (airline) list = list.filter(f => f.airline === String(airline).toUpperCase());
     if (status) list = list.filter(f => statusOf(f, today()) === status);
+    if (mode) list = list.filter(f => modeOf(f) === String(mode).toLowerCase());
     if (q) { const t = String(q).toLowerCase(); list = list.filter(f => JSON.stringify(f).toLowerCase().includes(t)); }
     return list.sort((a, b) => b.date.localeCompare(a.date)).slice(0, Math.min(500, Number(limit) || 50));
   }
@@ -147,7 +152,8 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
       `Top airlines: ${top(s.carriers, 6, ([c, n]) => `${airlineName(ref, c)} ${n}`)}.`,
       `Countries: ${[...s.countries.keys()].map(c => countryName(ref, c)).join(", ")}.`,
       `Flights by year: ${[...s.years.entries()].sort().map(([y, v]) => `${y}:${v.n}`).join(" ")}.`,
-    ].join("\n");
+      s.ground.n ? `On the ground (not counted as flights): ${Object.entries(s.ground.by).map(([m, g]) => `${MODE_INFO[m].label.toLowerCase()} ${g.n} legs, ${Math.round(g.km)} km`).join("; ")}.` : "",
+    ].filter(Boolean).join("\n");
   }
 
   function stats(year, person = "me") {

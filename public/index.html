@@ -68,7 +68,7 @@
     </div>
     <div class="globe-focus" id="focus" hidden></div>
     <div class="hero-bottom">
-      <div class="globe-legend"><span><i class="l-flown"></i>Flown</span><span><i class="l-up"></i>Upcoming</span><span><i class="l-home"></i>Home</span></div>
+      <div class="globe-legend"><span><i class="l-flown"></i>Flown</span><span><i class="l-up"></i>Upcoming</span><span><i class="l-home"></i>Home</span><span id="legend" class="l-modes" hidden></span></div>
       <section class="ribbon" aria-label="Filter by year">
         <button class="yr-all" type="button" id="yAll">All years</button>
         <div class="years" id="years"></div>
@@ -105,22 +105,28 @@
   <section class="panel" id="p-add" hidden>
     <div class="add-grid">
       <form class="card form" id="form" autocomplete="off" novalidate>
-        <div class="card-head"><h2 id="formTitle">Log a flight</h2><p id="formSub">Airline, airports, distance and duration fill in as you type.</p></div>
+        <div class="card-head"><h2 id="formTitle">Log a flight</h2><p id="formSub">Airline, airports, distance and duration fill in as you type. Log trains, drives, buses and ferries between flights too, so your trips connect.</p></div>
+        <div class="seg modes" id="iModes" role="group" aria-label="How you travelled">
+          <button type="button" data-mode="air" aria-pressed="true">✈ Flight</button><button type="button" data-mode="train" aria-pressed="false">🚆 Train</button><button type="button" data-mode="car" aria-pressed="false">🚗 Car</button><button type="button" data-mode="bus" aria-pressed="false">🚌 Bus</button><button type="button" data-mode="ferry" aria-pressed="false">⛴ Ferry</button>
+        </div>
+        <input type="hidden" id="iMode" value="air">
         <div class="fields">
           <div class="field"><label for="iDate">Date</label><input type="date" id="iDate" required></div>
-          <div class="field"><label for="iFlight">Flight number</label><div class="inline"><input id="iFlight" placeholder="6E 5297"><button class="btn small lookup-only" type="button" id="lookupBtn">Look up</button></div><span class="hint" id="hFlight"></span></div>
+          <div class="field"><label for="iFlight" id="lFlight">Flight number</label><div class="inline"><input id="iFlight" placeholder="6E 5297"><button class="btn small lookup-only" type="button" id="lookupBtn">Look up</button></div><span class="hint" id="hFlight"></span></div>
           <div class="field"><label for="iTime">Departs (local)</label><input type="time" id="iTime"></div>
+          <div class="field ground-only"><label for="iOperator">Operator</label><input id="iOperator" placeholder="Trenitalia, Uber, own car…" maxlength="60"></div>
           <div class="field"><label for="iFrom">From</label><input id="iFrom" list="apList" placeholder="BOM" required><span class="hint" id="hFrom"></span></div>
           <div class="field"><label for="iTo">To</label><input id="iTo" list="apList" placeholder="DEL" required><span class="hint" id="hTo"></span></div>
           <div class="field"><label for="iDur">Duration (h:mm)</label><input id="iDur" placeholder="auto"><span class="hint" id="hDur"></span></div>
-          <div class="field"><label for="iAircraft">Aircraft</label><input id="iAircraft" list="acList" placeholder="32N"><span class="hint" id="hAircraft"></span></div>
-          <div class="field"><label for="iReg">Registration</label><input id="iReg" placeholder="VT-ISK"></div>
+          <div class="field ground-only"><label for="iDist">Distance (km)</label><input id="iDist" inputmode="numeric" placeholder="auto"><span class="hint" id="hDist"></span></div>
+          <div class="field air-only"><label for="iAircraft">Aircraft</label><input id="iAircraft" list="acList" placeholder="32N"><span class="hint" id="hAircraft"></span></div>
+          <div class="field air-only"><label for="iReg">Registration</label><input id="iReg" placeholder="VT-ISK"></div>
           <div class="field"><label for="iSeat">Seat</label><input id="iSeat" placeholder="27C"></div>
-          <div class="field"><label for="iSeatType">Seat type</label><select id="iSeatType"><option value="">Not recorded</option><option value="window">Window</option><option value="middle">Middle</option><option value="aisle">Aisle</option></select></div>
+          <div class="field air-only"><label for="iSeatType">Seat type</label><select id="iSeatType"><option value="">Not recorded</option><option value="window">Window</option><option value="middle">Middle</option><option value="aisle">Aisle</option></select></div>
           <div class="field"><label for="iCabin">Cabin</label><select id="iCabin"><option value="economy">Economy</option><option value="premium">Premium economy</option><option value="business">Business</option><option value="first">First</option></select></div>
           <div class="field"><label for="iReason">Reason</label><select id="iReason"><option value="leisure">Leisure</option><option value="business">Business</option><option value="crew">Crew</option><option value="other">Other</option></select></div>
           <div class="field"><label for="iTrip">Trip</label><input id="iTrip" placeholder="Spain 2026"></div>
-          <div class="field wide"><span class="flabel">Who flew</span><div class="who-pick" id="iWho"></div></div>
+          <div class="field wide"><span class="flabel" id="lWho">Who flew</span><div class="who-pick" id="iWho"></div></div>
           <div class="field wide"><label for="iNote">Note or booking reference</label><input id="iNote" placeholder="Anything worth remembering"></div>
         </div>
         <p class="err" id="formErr" role="alert"></p>

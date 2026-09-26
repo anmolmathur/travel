@@ -128,14 +128,16 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
     status,
     /** Pull flight segments out of booking text and/or a ticket image. */
     async extract({ text, image, today }) {
-      const parts = [{ text: `You extract flight segments from travel bookings, e-tickets, itineraries and boarding passes.
+      const parts = [{ text: `You extract travel segments (flights, and any train, car, bus or ferry legs) from travel bookings, e-tickets, itineraries and boarding passes.
 Today is ${today}.
 Return a JSON array. Each item:
-{"date":"YYYY-MM-DD","time":"HH:MM local departure or empty","from":"IATA airport code","to":"IATA airport code",
+{"mode":"air|train|car|bus|ferry","date":"YYYY-MM-DD","time":"HH:MM local departure or empty","from":"IATA airport code","to":"IATA airport code",
+ "operator":"for train/car/bus/ferry legs, the operator (e.g. Trenitalia), else empty",
  "flight":"airline IATA code + number, no space, e.g. 6E5297","seat":"e.g. 27C or empty","seatType":"window|middle|aisle or empty",
  "cabin":"economy|premium|business|first","aircraft":"IATA aircraft type code like 32N or 77W if stated, else empty",
  "duration":"H:MM if stated, else empty","note":"booking reference / PNR if present, else empty"}
-Rules: one item per flight segment, including connections and return legs. Convert city names to that city's main airport code.
+Rules: one item per segment, including connections and return legs. Convert city names to that city's main airport code;
+for train, car, bus and ferry legs use the main airport code of each end city. For those legs "flight" is the train or service number, or empty.
 If a year is missing, use the next occurrence on or after today for bookings, else the most recent past date.
 Never invent flights. If there are none, return [].
 ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
@@ -147,7 +149,7 @@ ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
     async ask({ question, table, summary, today }) {
       const text = await generate({
         json: false, useSmart: true, temperature: 0.3,
-        system: "You are Wander, a friendly analyst for one person's flight logbook. Answer only from the data given. Be concise: 1-4 short paragraphs or a short list. Use km. If the data can't answer, say so. Cancelled flights were not flown and must be excluded unless asked about.",
+        system: "You are Wander, a friendly analyst for one person's travel logbook. Answer only from the data given. Rows whose flight column starts with TRAIN, CAR, BUS or FERRY are ground journeys, not flights: leave them out of flight counts unless asked, but count the places they reach. Be concise: 1-4 short paragraphs or a short list. Use km. If the data can't answer, say so. Cancelled flights were not flown and must be excluded unless asked about.",
         parts: [{ text: `Today is ${today}.\nSUMMARY:\n${summary}\n\nFLIGHTS (date | flight | from | to | airline | distance | duration | aircraft | seat | cabin | status):\n${table}\n\nQUESTION: ${String(question).slice(0, 1000)}` }],
       });
       return text.trim();
