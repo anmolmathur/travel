@@ -97,6 +97,7 @@ export function buildApp(env = process.env) {
     if (path === "/api/review") { needRead(); return send(res, 200, service.reviewQueue()); }
     if (path === "/api/lookup") { needWrite(); return send(res, 200, { results: await service.lookup(url.searchParams.get("flight"), url.searchParams.get("date")) }); }
 
+    if (path === "/api/ai/status") { if (who !== "owner" && who !== "agent") throw new InputError("Sign in first.", 401); return send(res, 200, await service.aiStatus()); }
     if (path === "/api/ai/extract" && method === "POST") { needWrite(); return send(res, 200, { flights: await service.aiExtract(await readJSON(req, 12 * 1024 * 1024)) }); }
     if (path === "/api/ai/ask" && method === "POST") { needRead(); if (who === "public") throw new InputError("Sign in to ask questions.", 401); return send(res, 200, { answer: await service.aiAsk((await readJSON(req)).question) }); }
     if (path === "/api/ai/story" && method === "POST") { needRead(); if (who === "public") throw new InputError("Sign in to write a recap.", 401); return send(res, 200, await service.aiStory((await readJSON(req)).year)); }
@@ -130,8 +131,9 @@ export function buildApp(env = process.env) {
       return serveStatic(req, res, url.pathname);
     } catch (e) {
       const status = e.status || 500;
-      if (status >= 500 && !(e instanceof InputError)) console.error(e);
-      if (!res.headersSent) send(res, status, { error: status >= 500 && !(e instanceof InputError) && status !== 502 ? "Something went wrong on the server." : e.message });
+      const known = Boolean(e.status); // errors raised on purpose carry a status and a readable message
+      if (status >= 500 || status === 429) console.error(`${req.method} ${url.pathname} -> ${status}:`, known ? e.message : e);
+      if (!res.headersSent) send(res, status, { error: known ? e.message : "Something went wrong on the server." });
     }
   };
   return { handler, service, db };
