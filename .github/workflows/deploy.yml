@@ -1,6 +1,7 @@
 name: Deploy
 # Builds the image on every push to main, publishes it to GitHub Container Registry,
-# then (if the HETZNER_* secrets exist) pulls and restarts it on the server over SSH.
+# then (if the HETZNER_* secrets exist) runs deploy/remote-deploy.sh on the server over SSH:
+# first run sets everything up, later runs pull the new image and recreate the wander container.
 on:
   push:
     branches: [main]
@@ -37,16 +38,25 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Restart on the server
+      - name: Deploy to the server
         if: env.HAS_SERVER == 'true'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: ${{ secrets.HETZNER_USER }}
-          key: ${{ secrets.HETZNER_SSH_KEY }}
-          port: ${{ secrets.HETZNER_PORT || 22 }}
-          script: |
-            cd ${{ vars.WANDER_DIR || '/opt/wander' }}
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker compose pull wander
-            docker compose up -d wander
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_USER: ${{ secrets.HETZNER_USER }}
+          SSH_PORT: ${{ secrets.HETZNER_PORT || '22' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          AERODATABOX_API_KEY: ${{ secrets.AERODATABOX_API_KEY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          WANDER_IMAGE: ghcr.io/${{ github.repository }}:latest
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          # Secrets travel over the SSH session's stdin, never on a command line.
+          {
+            printf 'export GEMINI_API_KEY=%q AERODATABOX_API_KEY=%q GHCR_TOKEN=%q GHCR_USER=%q WANDER_IMAGE=%q\n' \
+              "$GEMINI_API_KEY" "$AERODATABOX_API_KEY" "$GHCR_TOKEN" "$GHCR_USER" "$WANDER_IMAGE"
+            cat deploy/remote-deploy.sh
+          } | ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+                "$SSH_USER@$SSH_HOST" 'bash -s'

@@ -60,6 +60,23 @@ npm test
 
 ## Host it on a server (Hetzner or any Docker host)
 
+### One-click deploy from GitHub (recommended)
+
+Add these repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `HETZNER_HOST` | Server IP or hostname reachable over SSH from GitHub |
+| `HETZNER_USER` | SSH user that can run `docker` (and create `/opt/wander`, or has passwordless sudo) |
+| `HETZNER_SSH_KEY` | Private key for that user (the matching public key goes in `~/.ssh/authorized_keys`) |
+| `HETZNER_PORT` | Optional, if SSH isn't on 22 |
+| `GEMINI_API_KEY` | Optional, turns on the AI features |
+| `AERODATABOX_API_KEY` | Optional, turns on flight lookup |
+
+Then run **Actions → Deploy → Run workflow**, or push to `main`. `deploy/remote-deploy.sh` runs on the server over SSH. On the first run it creates `/opt/wander` with a random password and API token. On every run it pulls the new image and recreates only the `wander` container. If `cloudflared` runs in Docker, it also joins Wander to the same network. The log ends with the URL to use for the Cloudflare tunnel route (`http://wander:3000` for a containerised `cloudflared`, `http://localhost:3040` otherwise). Read the generated password on the server with `grep WANDER_PASSWORD /opt/wander/.env`.
+
+### Manual setup
+
 1. **DNS.** Add an `A` record for `wander.anmolmathur.com` pointing at the server's IPv4 (and `AAAA` for IPv6). If the domain is on Cloudflare, either leave it DNS-only and let Caddy/certbot issue the certificate, or proxy it and use a Cloudflare origin certificate.
 2. **Image access.** The GitHub Action publishes `ghcr.io/anmolmathur/travel`. While the repo is private, log the server in once with a personal access token that has `read:packages`:
    `echo <token> | docker login ghcr.io -u anmolmathur --password-stdin`
