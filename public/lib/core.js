@@ -11,6 +11,23 @@ export const SEAT_TYPES = ["window", "middle", "aisle"];
 export const CABINS = ["economy", "premium", "business", "first"];
 export const REASONS = ["leisure", "business", "crew", "other"];
 export const STATUSES = ["flown", "upcoming", "cancelled"];
+
+/* ---------------- travellers ---------------- */
+// Every flight lists who flew it by person id ("me" is the owner). A missing list means the owner alone;
+// an empty list means "not yet assigned" (e.g. imported from someone else's bookings).
+export const slug = s => String(s || "").trim().toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32);
+export function travellersOf(f) { return Array.isArray(f.travellers) ? f.travellers : ["me"]; }
+export function cleanTravellers(v) {
+  if (v === undefined || v === null) return undefined;
+  const list = Array.isArray(v) ? v : String(v).split(/[;,|]/);
+  if (list.length === 1 && /^(unassigned|none|\?)$/i.test(String(list[0]).trim())) return [];
+  return [...new Set(list.map(slug).filter(Boolean))];
+}
+/** Flights one person flew; "all" means anyone in the family (unassigned flights excluded). */
+export function forPerson(flights, pid) {
+  if (!pid || pid === "all") return flights.filter(f => travellersOf(f).length > 0);
+  return flights.filter(f => travellersOf(f).includes(pid));
+}
 const EARTH_KM = 6371.0088;
 
 /** Turn the compact ref.json payload into lookup maps. */
@@ -90,7 +107,7 @@ export function toDoc(f, ref, extra = {}, today = todayISO()) {
     distanceKm: km, duration, seat: String(f.seat || "").toUpperCase(), seatType: pick(f.seatType, SEAT_TYPES, ""),
     cabin: pick(f.cabin, CABINS, "economy"), reason: pick(f.reason, REASONS, "leisure"),
     aircraft: String(f.aircraft || "").toUpperCase(), registration: String(f.registration || "").toUpperCase(),
-    trip: f.trip || "", note: f.note || "", status, ...extra,
+    trip: f.trip || "", note: f.note || "", status, travellers: cleanTravellers(f.travellers) ?? ["me"], ...extra,
   };
 }
 
@@ -155,7 +172,7 @@ export function computeStats(list, ref) {
  * Finds flights that were probably booked but not flown.
  * Returns { groups, flags } where flags maps flight id -> [{sev, msg}].
  */
-export function computeFlags(flights, today = todayISO()) {
+function flagsFor(flights, today) {
   const flags = new Map(), groups = [];
   const live = flights.filter(f => statusOf(f, today) !== "cancelled")
     .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")) || a.id.localeCompare(b.id));
@@ -234,6 +251,38 @@ export function computeFlags(flights, today = todayISO()) {
   return { groups, flags };
 }
 
+/**
+ * Review heuristics, run separately for each person so two people's itineraries on the same day don't
+ * look like a conflict, plus a "whose flight was this?" group for unassigned flights.
+ */
+export function computeFlags(flights, today = todayISO()) {
+  const people = [...new Set(flights.flatMap(travellersOf))];
+  const flags = new Map(), groups = [], seen = new Set();
+  for (const pid of people.length ? people : ["me"]) {
+    const r = flagsFor(forPerson(flights, pid), today);
+    for (const g of r.groups) {
+      const key = g.kind + ":" + g.items.map(f => f.id).sort().join(",");
+      if (seen.has(key)) continue;
+      seen.add(key); groups.push(people.length > 1 ? { ...g, person: pid } : g);
+    }
+    for (const [id, list] of r.flags) {
+      const cur = flags.get(id) || [];
+      for (const x of list) if (!cur.some(y => y.msg === x.msg)) cur.push(x);
+      flags.set(id, cur);
+    }
+  }
+  // Unassigned flights, clustered into journeys (flights no more than 5 days apart).
+  const open = flights.filter(f => travellersOf(f).length === 0 && statusOf(f, today) !== "cancelled").sort((a, b) => a.date.localeCompare(b.date));
+  let cur = null;
+  const push = () => { if (!cur) return; const msg = `${cur.length} flight${cur.length > 1 ? "s" : ""} from ${niceDate(cur[0].date)}${cur.length > 1 ? ` to ${niceDate(cur.at(-1).date)}` : ""} ${cur.length > 1 ? "aren't" : "isn't"} assigned to anyone yet. Who flew ${cur.length > 1 ? "them" : "it"}?`; groups.push({ sev: "med", kind: "unassigned", title: "Whose flight was this?", msg, items: cur }); cur.forEach(f => { const l = flags.get(f.id) || []; l.push({ sev: "med", msg }); flags.set(f.id, l); }); cur = null; };
+  for (const f of open) { if (cur && dayDiff(cur.at(-1).date, f.date) > 5) push(); (cur ||= []).push(f); }
+  push();
+  const order = { high: 0, med: 1, low: 2 };
+  // Unassigned flights first: they're hidden from every map until someone claims them.
+  groups.sort((a, b) => (b.kind === "unassigned") - (a.kind === "unassigned") || order[a.sev] - order[b.sev] || b.items[0].date.localeCompare(a.items[0].date));
+  return { groups, flags };
+}
+
 /* ---------------- trips ---------------- */
 /**
  * Stitches flights into trips: a trip leaves home and ends when you land back home,
@@ -304,6 +353,7 @@ export function fromOpenFlightsCSV(text) {
       seatType: seat[g("Seat_Type")] || "", cabin: cab[g("Class")] || "economy", reason: rs[g("Reason")] || "leisure",
       aircraft: g("Plane"), registration: g("Registration"), trip: g("Trip"), note: g("Note"),
       status: st === "cancelled" ? "cancelled" : undefined,
+      travellers: ix("Travellers") >= 0 ? cleanTravellers(g("Travellers")) : undefined,
     };
   });
   return { flights, error: "" };
@@ -312,10 +362,10 @@ export function fromOpenFlightsCSV(text) {
 export function toOpenFlightsCSV(flights, ref, today = todayISO()) {
   const invS = { window: "W", aisle: "A", middle: "M" }, invC = { economy: "Y", premium: "P", business: "C", first: "F" }, invR = { leisure: "L", business: "B", crew: "C", other: "O" };
   const q = s => (/[",\n]/.test(String(s ?? "")) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ""));
-  const lines = ["Date,From,To,Flight_Number,Airline,Distance,Duration,Seat,Seat_Type,Class,Reason,Plane,Registration,Trip,Note,Status"];
+  const lines = ["Date,From,To,Flight_Number,Airline,Distance,Duration,Seat,Seat_Type,Class,Reason,Plane,Registration,Trip,Note,Status,Travellers"];
   [...flights].sort((a, b) => b.date.localeCompare(a.date)).forEach(f => lines.push([
     f.date + (f.time ? ` ${f.time}:00` : ""), f.from, f.to, f.flight, airlineName(ref, f.airline), Math.round((f.distanceKm || 0) / 1.609344),
-    f.duration, f.seat, invS[f.seatType] || "", invC[f.cabin] || "Y", invR[f.reason] || "L", f.aircraft, f.registration, f.trip, f.note, statusOf(f, today),
+    f.duration, f.seat, invS[f.seatType] || "", invC[f.cabin] || "Y", invR[f.reason] || "L", f.aircraft, f.registration, f.trip, f.note, statusOf(f, today), travellersOf(f).join(";") || "unassigned",
   ].map(q).join(",")));
   return lines.join("\n") + "\n";
 }
@@ -325,6 +375,6 @@ export function flightsAsText(flights, ref, today = todayISO()) {
   return [...flights].sort((a, b) => a.date.localeCompare(b.date)).map(f => {
     const A = ref.ap.get(f.from), B = ref.ap.get(f.to);
     return [f.date, f.flight || "-", `${f.from}(${A?.city || ""},${A?.cc || ""})`, `${f.to}(${B?.city || ""},${B?.cc || ""})`,
-      airlineName(ref, f.airline), `${f.distanceKm || 0}km`, f.duration || "", f.aircraft || "", f.seat || "", f.cabin || "", statusOf(f, today)].join(" | ");
+      airlineName(ref, f.airline), `${f.distanceKm || 0}km`, f.duration || "", f.aircraft || "", f.seat || "", f.cabin || "", statusOf(f, today), travellersOf(f).join("+") || "unassigned"].join(" | ");
   }).join("\n");
 }
