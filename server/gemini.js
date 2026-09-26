@@ -84,6 +84,12 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
         }
       }
     }
+    // Pro models have no free-tier quota ("limit: 0"): use the fast model for smart tasks instead.
+    if (res.status === 429 && useSmart && chosen.smart !== chosen.fast && /limit: 0\b/.test(data?.error?.message || "")) {
+      console.warn(`Gemini model "${chosen.smart}" has no quota on this key (billing not enabled); using "${chosen.fast}" for questions and recaps.`);
+      chosen.smart = used = chosen.fast;
+      ({ res, data } = await post(chosen.fast, body, deadline));
+    }
     if (!res.ok) {
       const m = data?.error?.message || `HTTP ${res.status}`;
       if (res.status === 429) throw fail(`Gemini rate limit or quota reached: ${m}`, 429);
