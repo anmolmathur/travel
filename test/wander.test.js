@@ -151,3 +151,21 @@ test("Gemini client explains blocked answers and bad keys", async () => {
   const badKey = createGemini({ apiKey: "k", model: "m", fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: "API key not valid. Please pass a valid API key." } }) }) });
   await assert.rejects(badKey.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /rejected the API key/);
 });
+
+test("replacing an airport fixes every matching flight and can be undone by id", async () => {
+  await withServer({}, async base => {
+    const post = (path, body) => fetch(base + path, { method: "POST", body: JSON.stringify(body) }).then(r => r.json());
+    await post("/api/flights", { date: "2023-03-18", from: "BOM", to: "HKT", flight: "G821" });
+    await post("/api/flights", { date: "2023-03-19", from: "HKT", to: "BOM", flight: "G822" });
+    await post("/api/flights", { date: "2018-09-26", from: "BOM", to: "HKG", flight: "CX660" });
+    const r = await post("/api/airports/replace", { from: "HKT", to: "HKG" });
+    assert.equal(r.replaced, 2);
+    const { flights } = await (await fetch(base + "/api/flights")).json();
+    assert.equal(flights.filter(f => f.from === "HKG" || f.to === "HKG").length, 3);
+    assert.ok(flights.find(f => f.flight === "G821").distanceKm > 4000, "distance recalculated for Hong Kong");
+    const undo = await post("/api/airports/replace", { from: "HKG", to: "HKT", ids: r.ids });
+    assert.equal(undo.replaced, 2, "undo only touches the flights that were changed");
+    const bad = await fetch(base + "/api/airports/replace", { method: "POST", body: JSON.stringify({ from: "HKT", to: "BOM" }) });
+    assert.equal(bad.status, 400);
+  });
+});
