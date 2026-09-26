@@ -353,3 +353,28 @@ body:not(.lookup) .lookup-only{display:none!important}
 body:not([data-tab="overview"]) .hero:not(:fullscreen):not(.pseudo-fs){height:clamp(380px,55vh,600px)}
 body:not([data-tab="overview"]) .hero:not(:fullscreen):not(.pseudo-fs) .hero-sub{display:none}
 body:not([data-tab="overview"]) .scroll-cue{display:none}
+
+/* people */
+.people{display:flex;flex-wrap:wrap;gap:6px}
+.pchip{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 13px 0 4px;border-radius:999px;border:1px solid rgba(43,58,90,.7);background:rgba(10,16,32,.55);backdrop-filter:blur(8px);color:var(--ink-2);cursor:pointer;font-weight:500}
+.pchip[aria-pressed="true"]{color:var(--ink);border-color:var(--pc,var(--rose));box-shadow:0 0 0 1px var(--pc,var(--rose)) inset}
+.av{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--pc,var(--rose));color:#0B0F1A;font:700 11.5px/1 var(--f-body);flex:none}
+.av.sm{width:20px;height:20px;font-size:10px}
+.av.fam{background:conic-gradient(#FF6F91 0 33%,#7CC4FF 0 66%,#F6C667 0)}
+.whos{display:inline-flex}
+.whos .av{margin-left:-5px;box-shadow:0 0 0 2px var(--surface)}
+.whos .av:first-child{margin-left:0}
+.who-pick{display:flex;flex-wrap:wrap;gap:6px}
+.who-pick label,.who-tog{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px 0 3px;border-radius:999px;border:1px solid var(--line-2);background:var(--bg-2);cursor:pointer;font-size:13px;color:var(--ink-2)}
+.who-pick input{position:absolute;opacity:0;pointer-events:none}
+.who-pick label:has(input:checked),.who-tog[aria-pressed="true"]{color:var(--ink);border-color:var(--pc,var(--rose));box-shadow:0 0 0 1px var(--pc,var(--rose)) inset}
+.who-pick label:focus-within{outline:2px solid var(--rose);outline-offset:2px}
+.flabel{font:600 11px/1 var(--f-body);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.trip .who-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;align-items:center}
+.trip .who-row .muted{margin-right:4px}
+.who-tog{height:26px;font-size:12px}
+.rvg .assign{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+.person-tag{font-size:12px;color:var(--ink-3);margin-left:8px}
+.people-list{display:grid;gap:8px;margin:14px 0}
+.people-list .prow{display:flex;gap:8px;align-items:center}
+.people-list input{height:36px;border-radius:10px;border:1px solid var(--line-2);background:var(--bg-2);padding:0 12px;flex:1;min-width:0}

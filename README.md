@@ -16,6 +16,8 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 **Review.** Flags likely errors: codeshares logged twice (TK774 and WY5774), exact duplicates, a route rebooked within four days with no return in between, days whose flights can't form one journey, and planned flights whose date has passed. **Not flown** keeps a flight in the log (struck through) but removes it from every statistic, and can be undone.
 
+**Family.** Every flight records who flew it. Switch the whole app (map, stats, passport, trips) between people or the whole family with the buttons above the stats. Trips have one-click "Who went" buttons, and flights imported from someone else's bookings arrive unassigned and wait in Review until you say whose they were. Manage the list under Logbook → People, or seed it with `WANDER_PEOPLE=me:Anmol,kruti:Kruti`. CSV exports and imports carry a `Travellers` column (`me;kruti`, or `unassigned`).
+
 **Logbook.** Searchable, sortable table with edit, not-flown and delete. OpenFlights CSV import and export.
 
 ### Gemini features
@@ -70,7 +72,7 @@ Back up the database with `docker compose exec wander node server/cli.js export 
 
 ## Let Claude (or any agent) keep the log
 
-Wander serves a [Model Context Protocol](https://modelcontextprotocol.io) endpoint at `/mcp`, authenticated with `WANDER_API_TOKEN`. Tools: `list_flights`, `add_flight`, `add_flights`, `update_flight`, `mark_not_flown`, `restore_flight`, `delete_flight`, `get_stats`, `review_queue`, `lookup_flight`.
+Wander serves a [Model Context Protocol](https://modelcontextprotocol.io) endpoint at `/mcp`, authenticated with `WANDER_API_TOKEN`. Tools: `list_flights`, `list_people`, `set_travellers`, `replace_airport`, `add_flight`, `add_flights`, `update_flight`, `mark_not_flown`, `restore_flight`, `delete_flight`, `get_stats`, `review_queue`, `lookup_flight`.
 
 Claude Code:
 
