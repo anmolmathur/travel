@@ -28,7 +28,7 @@ With `GEMINI_API_KEY` set, these switch on. All calls go from the server, so the
 - **Trip names**: evocative names and one-line summaries for trips.
 - **Where next**: destination ideas you haven't visited, reachable from home.
 
-`GEMINI_MODEL` (default `gemini-2.5-flash`) handles extraction and trip names; `GEMINI_MODEL_SMART` handles questions, recaps and ideas. Change either if Google renames or retires a model.
+`GEMINI_MODEL` handles extraction and trip names; `GEMINI_MODEL_SMART` handles questions, recaps and ideas. Both default to `gemini-flash-latest`, Google's alias for its current Flash model, which works on the free tier. Pro models need billing enabled on the key's Google project; set `GEMINI_MODEL_SMART` to one (for example `gemini-pro-latest`) if you have it. If the smart model has no quota, Wander uses the fast model instead.
 
 If an AI feature shows an error, run this on the server. It checks the key, lists the models your key can use and makes two small test calls:
 
