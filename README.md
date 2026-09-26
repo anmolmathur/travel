@@ -8,9 +8,11 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 ## What it does
 
-**Atlas.** A night-side globe (or flat map) with every route drawn as a glowing great-circle arc, weighted by how often you flew it, and small planes moving along the busiest ones. Visited countries are lit, home base pulses, and upcoming trips are dashed. Click an airport or route for details. **Replay the years** animates your map growing year by year. Below the map: a passport of country stamps in the order you first arrived, records (longest, shortest, furthest from home, north/south/east/west-most), airline cards with logos (defunct carriers are marked), and the full OpenFlights-style numbers.
+**Atlas.** A night-side globe (or flat map) with every route drawn as a glowing great-circle arc, weighted by how often you flew it, and small planes moving along the busiest ones. Train, car, bus and ferry legs get their own colour and dash, with a little train, car, bus or boat travelling along them. Visited countries are lit, home base pulses, and upcoming trips are dashed. Click an airport or route for details. **Replay the years** animates your map growing year by year. Below the map: a passport of country stamps in the order you first arrived, records (longest, shortest, furthest from home, north/south/east/west-most), airline cards with logos (defunct carriers are marked), and the full OpenFlights-style numbers.
 
 **Trips.** Flights are grouped into journeys that leave home and end when you land back, with a mini-map and route chain for each. A ⋯ in the chain marks a leg that isn't in the log.
+
+**Trains, cars, buses and ferries.** Log the ground legs between flights (Milan to Rome by train, a drive to Goa) from the Add form's mode picker, a CSV `Mode` column, or an agent's `mode` field. Each end is the main airport code of its city (Milan: LIN or MXP, Rome: FCO); two airports of one city count as connected. Ground legs join your trips, light up the countries they reach and show on the map, but stay out of the flight figures (flights, airports, airlines, km flown), which get their own "On the ground" card. Distance is the straight line plus 20% unless you enter the road or rail km.
 
 **Insights.** Flights and new airports per year, a month-by-year heatmap, month and weekday patterns, top routes and airports, aircraft families and types, haul bands, domestic vs international and a rough CO₂ estimate.
 
@@ -18,7 +20,7 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 **Family.** Every flight records who flew it. Switch the whole app (map, stats, passport, trips) between people or the whole family with the buttons above the stats. Trips have one-click "Who went" buttons, and flights imported from someone else's bookings arrive unassigned and wait in Review until you say whose they were. Manage the list under Logbook → People, or seed it with `WANDER_PEOPLE=me:Anmol,kruti:Kruti`. CSV exports and imports carry a `Travellers` column (`me;kruti`, or `unassigned`).
 
-**Logbook.** Searchable, sortable table with edit, not-flown and delete. OpenFlights CSV import and export.
+**Logbook.** Searchable, sortable table with edit, not-flown and delete. OpenFlights CSV import and export; Wander's export adds `Travellers` and `Mode` columns, and puts a ground leg's operator in `Airline`.
 
 ### Gemini features
 

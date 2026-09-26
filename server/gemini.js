@@ -2,43 +2,50 @@
 // The key never leaves the server.
 
 const API = "https://generativelanguage.googleapis.com/v1beta";
-const TIMEOUT_MS = 85_000; // stay under Cloudflare's 100-second limit
+const BUDGET_MS = 85_000; // every attempt for one request together stays under Cloudflare's 100-second limit
 
-const fail = (message, status = 502) => Object.assign(new Error(message), { status });
+// 503, not 502: a 502 reads as "the proxy couldn't reach Wander", and some proxies swap in their own error page.
+const fail = (message, status = 503) => Object.assign(new Error(message), { status });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** Google answers 503/500 ("high demand", "overloaded") when a model is busy; that passes, so retry or switch model. */
+const isBusy = (status, msg) => status === 503 || status === 500 || /high demand|overloaded|temporarily unavailable/i.test(msg);
 /** Models sometimes wrap a requested array in an object ({"flights": [...]}); unwrap it. */
 export const asArray = out => Array.isArray(out) ? out : out && typeof out === "object" ? (Object.values(out).find(Array.isArray) || []) : [];
 
-/** Picks the newest stable Gemini model of a family ("flash" or "pro") from a ListModels response. */
-export function pickModel(names, family) {
+/** Text models of a family ("flash" or "pro") from a ListModels response, newest stable first. */
+export function rankModels(names, family) {
   const version = n => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
   const ok = names.filter(n => n.startsWith("gemini-") && n.includes(`-${family}`)
-    && !/(lite|tts|image|audio|live|embedding|vision|thinking|computer|robotics|8b)/.test(n));
-  ok.sort((a, b) => version(b) - version(a) || Number(/preview|exp/.test(a)) - Number(/preview|exp/.test(b)) || a.length - b.length);
-  return ok[0] || null;
+    && !/(lite|tts|image|audio|live|embedding|vision|thinking|computer|robotics|omni|transcribe|8b)/.test(n));
+  return ok.sort((a, b) => version(b) - version(a) || Number(/preview|exp/.test(a)) - Number(/preview|exp/.test(b)) || a.length - b.length);
 }
+/** Picks the newest stable Gemini model of a family. */
+export const pickModel = (names, family) => rankModels(names, family)[0] || null;
 
 export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
   if (!apiKey) return null;
   const chosen = { fast: model, smart: smartModel || model };
   const headers = { "content-type": "application/json", "x-goog-api-key": apiKey };
 
-  async function request(url, init) {
-    try { return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
+  async function request(url, init, deadline = Date.now() + BUDGET_MS) {
+    const left = deadline - Date.now();
+    if (left < 1000) throw fail("Gemini took too long to answer. Try again in a minute.", 504);
+    try { return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(left) }); }
     catch (e) {
       if (e?.name === "TimeoutError" || e?.name === "AbortError") throw fail("Gemini took too long to answer. Try again, or set GEMINI_MODEL_SMART to a faster model.", 504);
       throw fail(`Couldn't reach Gemini (${e?.cause?.code || e?.message || "network error"}).`);
     }
   }
 
-  async function listModels() {
-    const res = await request(`${API}/models?pageSize=1000`, { headers });
+  async function listModels(deadline) {
+    const res = await request(`${API}/models?pageSize=1000`, { headers }, deadline);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw fail(`Gemini rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`);
+    if (!res.ok) throw fail(`Gemini rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 502);
     return (data.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => m.name.replace(/^models\//, ""));
   }
 
-  async function post(m, body) {
-    const res = await request(`${API}/models/${encodeURIComponent(m)}:generateContent`, { method: "POST", headers, body: JSON.stringify(body) });
+  async function post(m, body, deadline) {
+    const res = await request(`${API}/models/${encodeURIComponent(m)}:generateContent`, { method: "POST", headers, body: JSON.stringify(body) }, deadline);
     return { res, data: await res.json().catch(() => ({})) };
   }
 
@@ -49,16 +56,32 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
       generationConfig: { temperature, ...(json ? { responseMimeType: "application/json" } : {}) },
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     };
-    let { res, data } = await post(chosen[slot], body);
+    const deadline = Date.now() + BUDGET_MS;
+    let used = chosen[slot];
+    let { res, data } = await post(used, body, deadline);
     const msg = data?.error?.message || "";
     // The configured model may have been renamed or retired: find the current one and retry once.
     if (res.status === 404 || (res.status === 400 && /not (found|supported)|unknown model|is not available/i.test(msg))) {
-      const names = await listModels();
+      const names = await listModels(deadline);
       const alt = pickModel(names, useSmart ? "pro" : "flash") || pickModel(names, "flash");
       if (alt && alt !== chosen[slot]) {
         console.warn(`Gemini model "${chosen[slot]}" is unavailable (${msg || res.status}); using "${alt}". Set GEMINI_MODEL${useSmart ? "_SMART" : ""}=${alt} to silence this.`);
-        chosen[slot] = alt;
-        ({ res, data } = await post(alt, body));
+        chosen[slot] = used = alt;
+        ({ res, data } = await post(alt, body, deadline));
+      }
+    }
+    // A busy model: one short retry, then the next Flash models that are up. The configured model stays the default.
+    if (!res.ok && isBusy(res.status, data?.error?.message || "")) {
+      await sleep(1500);
+      ({ res, data } = await post(used, body, deadline));
+      if (!res.ok && isBusy(res.status, data?.error?.message || "")) {
+        const alts = rankModels(await listModels(deadline), "flash").filter(n => n !== used).slice(0, 3);
+        for (const alt of alts) {
+          const r = await post(alt, body, deadline);
+          if (r.res.ok) console.warn(`Gemini model "${used}" is busy; answered with "${alt}".`);
+          ({ res, data } = r); used = alt;
+          if (res.ok || !isBusy(res.status, data?.error?.message || "")) break;
+        }
       }
     }
     // Pro models have no free-tier quota ("limit: 0"): use the fast model for smart tasks instead.
@@ -70,8 +93,9 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
     if (!res.ok) {
       const m = data?.error?.message || `HTTP ${res.status}`;
       if (res.status === 429) throw fail(`Gemini rate limit or quota reached: ${m}`, 429);
-      if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`);
-      throw fail(`Gemini error (${chosen[slot]}): ${m}`);
+      if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`, 502);
+      if (isBusy(res.status, m)) throw fail(`Gemini is overloaded right now (tried ${used} and other Flash models). Try again in a minute.`);
+      throw fail(`Gemini error (${used}): ${m}`);
     }
     const cand = data.candidates?.[0];
     const text = (cand?.content?.parts || []).filter(p => !p.thought).map(p => p.text || "").join("").trim();
@@ -110,14 +134,16 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
     status,
     /** Pull flight segments out of booking text and/or a ticket image. */
     async extract({ text, image, today }) {
-      const parts = [{ text: `You extract flight segments from travel bookings, e-tickets, itineraries and boarding passes.
+      const parts = [{ text: `You extract travel segments (flights, and any train, car, bus or ferry legs) from travel bookings, e-tickets, itineraries and boarding passes.
 Today is ${today}.
 Return a JSON array. Each item:
-{"date":"YYYY-MM-DD","time":"HH:MM local departure or empty","from":"IATA airport code","to":"IATA airport code",
+{"mode":"air|train|car|bus|ferry","date":"YYYY-MM-DD","time":"HH:MM local departure or empty","from":"IATA airport code","to":"IATA airport code",
+ "operator":"for train/car/bus/ferry legs, the operator (e.g. Trenitalia), else empty",
  "flight":"airline IATA code + number, no space, e.g. 6E5297","seat":"e.g. 27C or empty","seatType":"window|middle|aisle or empty",
  "cabin":"economy|premium|business|first","aircraft":"IATA aircraft type code like 32N or 77W if stated, else empty",
  "duration":"H:MM if stated, else empty","note":"booking reference / PNR if present, else empty"}
-Rules: one item per flight segment, including connections and return legs. Convert city names to that city's main airport code.
+Rules: one item per segment, including connections and return legs. Convert city names to that city's main airport code;
+for train, car, bus and ferry legs use the main airport code of each end city. For those legs "flight" is the train or service number, or empty.
 If a year is missing, use the next occurrence on or after today for bookings, else the most recent past date.
 Never invent flights. If there are none, return [].
 ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
@@ -129,7 +155,7 @@ ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
     async ask({ question, table, summary, today }) {
       const text = await generate({
         json: false, useSmart: true, temperature: 0.3,
-        system: "You are Wander, a friendly analyst for one person's flight logbook. Answer only from the data given. Be concise: 1-4 short paragraphs or a short list. Use km. If the data can't answer, say so. Cancelled flights were not flown and must be excluded unless asked about.",
+        system: "You are Wander, a friendly analyst for one person's travel logbook. Answer only from the data given. Rows whose flight column starts with TRAIN, CAR, BUS or FERRY are ground journeys, not flights: leave them out of flight counts unless asked, but count the places they reach. Be concise: 1-4 short paragraphs or a short list. Use km. If the data can't answer, say so. Cancelled flights were not flown and must be excluded unless asked about.",
         parts: [{ text: `Today is ${today}.\nSUMMARY:\n${summary}\n\nFLIGHTS (date | flight | from | to | airline | distance | duration | aircraft | seat | cabin | status):\n${table}\n\nQUESTION: ${String(question).slice(0, 1000)}` }],
       });
       return text.trim();

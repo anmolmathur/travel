@@ -147,5 +147,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 3000);
   const { handler } = buildApp();
   if (!process.env.WANDER_PASSWORD) console.warn("WANDER_PASSWORD is not set: anyone who can reach this server can edit the logbook.");
-  createServer(handler).listen(port, () => console.log(`Wander listening on :${port}`));
+  const server = createServer(handler);
+  // Keep idle connections open longer than the proxy in front (cloudflared keeps them 90 s). With Node's 5-second
+  // default, the proxy can reuse a socket at the moment Node closes it, and the visitor sees a bare 502.
+  server.keepAliveTimeout = 120_000;
+  server.headersTimeout = 125_000;
+  server.listen(port, () => console.log(`Wander listening on :${port}`));
+  // A stray rejection should be logged, not take the whole server down mid-request.
+  process.on("unhandledRejection", e => console.error("Unhandled rejection:", e));
 }

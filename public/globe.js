@@ -4,6 +4,26 @@
 const TAU = Math.PI * 2;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// Ground legs: a colour and dash per mode, so a train line reads differently from a road.
+export const GROUND_STYLE = {
+  train: { color: "#5FD6A8", rgb: "95,214,168", dash: [9, 3] },
+  car: { color: "#B7A4FF", rgb: "183,164,255", dash: [3, 3] },
+  bus: { color: "#F6C667", rgb: "246,198,103", dash: [3, 3] },
+  ferry: { color: "#6FB8FF", rgb: "111,184,255", dash: [1, 4] },
+};
+
+// Little top-down figures that travel along the routes, drawn pointing along +x in a ~16-unit box.
+const PLANE = new Path2D("M8 0C8-.9 7-1.3 5.5-1.3H1.6L-2.4-7.4H-4.2L-2.2-1.3H-5.6L-7-3.4H-8.2L-7.4 0-8.2 3.4H-7L-5.6 1.3H-2.2L-4.2 7.4H-2.4L1.6 1.3H5.5C7 1.3 8 .9 8 0Z");
+const FERRY = new Path2D("M7 0 3.5-3H-6.5V3H3.5Z");
+function carShape(c, len, wid, color, windows) {
+  c.fillStyle = color; c.beginPath(); if (c.roundRect) c.roundRect(-len / 2, -wid / 2, len, wid, wid * 0.42); else c.rect(-len / 2, -wid / 2, len, wid); c.fill();
+  c.fillStyle = "rgba(8,14,28,0.72)";
+  if (windows === "car") { c.fillRect(len * 0.1, -wid * 0.36, len * 0.16, wid * 0.72); c.fillRect(-len * 0.34, -wid * 0.34, len * 0.12, wid * 0.68); }
+  else if (windows === "bus") { c.fillRect(len * 0.36, -wid * 0.36, len * 0.08, wid * 0.72); for (let x = -len * 0.4; x < len * 0.3; x += len * 0.14) { c.fillRect(x, -wid * 0.5, len * 0.09, wid * 0.16); c.fillRect(x, wid * 0.34, len * 0.09, wid * 0.16); } }
+  else if (windows === "loco") { c.fillRect(len * 0.28, -wid * 0.34, len * 0.12, wid * 0.68); }
+  else if (windows === "coach") { for (let x = -len * 0.36; x < len * 0.36; x += len * 0.24) c.fillRect(x, -wid * 0.26, len * 0.14, wid * 0.52); }
+}
+
 export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onHover, onWheelHint, isFree = () => false }) {
   const ctx = canvas.getContext("2d");
   const land110 = topojson.feature(world110, world110.objects.countries).features;
@@ -101,41 +121,76 @@ export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onH
     for (const r of shown) {
       const lit = !highlight || r.ids.some(id => highlight.has(id));
       const fresh = freshFrom && r.first >= freshFrom;
-      const w = (0.7 + Math.sqrt(r.n) * 0.55) * zoomW * (highlight && lit ? 1.6 : 1);
+      const gs = GROUND_STYLE[r.mode];
+      const w = (0.7 + Math.sqrt(r.n) * 0.55) * zoomW * (highlight && lit ? 1.6 : 1) * (gs ? 0.9 : 1);
       const pa = P([r.a.lon, r.a.lat]) || [0, 0], pb = P([r.b.lon, r.b.lat]) || [W, H];
       let stroke;
-      if (r.up) stroke = "rgba(124,196,255,0.9)";
+      if (gs) stroke = `rgba(${gs.rgb},${r.up ? 0.7 : 0.95})`;
+      else if (r.up) stroke = "rgba(124,196,255,0.9)";
       else if (fresh) stroke = "rgba(246,198,103,0.95)";
       else { const g = ctx.createLinearGradient(pa[0], pa[1], pb[0], pb[1]); g.addColorStop(0, "rgba(255,138,91,0.95)"); g.addColorStop(1, "rgba(255,77,141,0.95)"); stroke = g; }
       ctx.globalAlpha = lit ? 1 : 0.07;
-      ctx.setLineDash(r.up ? [4, 5] : []);
+      ctx.setLineDash(gs ? gs.dash.map(x => x * zoomW) : r.up ? [4, 5] : []);
       ctx.beginPath(); path(r.geo);
       ctx.strokeStyle = stroke; ctx.lineWidth = w * 4.5; ctx.globalAlpha = (lit ? 0.07 : 0.01); ctx.stroke();
       ctx.lineWidth = w; ctx.globalAlpha = lit ? (r.up ? 0.9 : 0.78) : 0.07; ctx.stroke();
     }
     ctx.setLineDash([]); ctx.globalAlpha = 1;
 
-    // planes gliding along routes
-    if (!reduceMotion) {
-      const movers = shown.filter(r => !r.up && (!highlight || r.ids.some(id => highlight.has(id)))).sort((a, b) => b.n - a.n).slice(0, 70);
+    ctx.globalCompositeOperation = "source-over";
+
+    // planes, trains, cars, buses and ferries travelling along their routes (parked mid-route with reduced motion)
+    {
+      const lit = r => !highlight || r.ids.some(id => highlight.has(id));
+      const live = shown.filter(r => !r.up && lit(r));
+      const movers = [...live.filter(r => r.mode === "air").sort((a, b) => b.n - a.n).slice(0, 60), ...live.filter(r => r.mode !== "air").slice(0, 40)];
+      const at = (r, t) => { const pt = r.interp(r.dir ? t : 1 - t); return visible(P, pt) ? P(pt) : null; };
+      const size = Math.min(1.5, 0.62 * zoomW + 0.18), gsize = Math.min(2, size * 1.35); // ground figures are smaller shapes: draw them larger
       for (const r of movers) {
-        const period = 2200 + r.km * 0.9, count = Math.min(3, Math.ceil(r.n / 8));
+        const pa = P([r.a.lon, r.a.lat]), pb = P([r.b.lon, r.b.lat]);
+        const span = pa && pb ? Math.max(20, Math.hypot(pb[0] - pa[0], pb[1] - pa[1])) : 200;
+        // Ground legs move at a steadier, slower pace than flights; long flights take longer to cross.
+        const period = r.mode === "air" ? 2600 + r.km * 0.9 : 5200 + span * 18;
+        const count = reduceMotion ? (r.mode === "air" ? 0 : 1) : r.mode === "air" ? Math.min(3, Math.ceil(r.n / 8)) : 1;
         for (let j = 0; j < count; j++) {
-          const t = ((now / period) + r.seed + j / count) % 1;
-          for (let s = 0; s < 6; s++) {
-            const tt = t - s * 0.012; if (tt < 0) continue;
-            const pt = r.interp(r.dir ? tt : 1 - tt);
-            if (!visible(P, pt)) continue;
-            const p = P(pt); if (!p) continue;
-            ctx.globalAlpha = (1 - s / 6) * (s ? 0.45 : 1);
-            ctx.fillStyle = s ? "#FF9A7A" : "#FFF1E0";
-            ctx.beginPath(); ctx.arc(p[0], p[1], (s ? 1.3 : 1.9) * zoomW, 0, TAU); ctx.fill();
+          const t = reduceMotion ? 0.5 : ((now / period) + r.seed + j / count) % 1;
+          const edge = Math.min(1, t / 0.06, (1 - t) / 0.06);
+          const p = at(r, t), q = at(r, Math.min(1, t + 0.01)), q0 = at(r, Math.max(0, t - 0.01));
+          if (!p) continue;
+          const ang = q && q0 ? Math.atan2(q[1] - q0[1], q[0] - q0[0]) : 0;
+          ctx.save(); ctx.globalAlpha = edge;
+          if (r.mode === "air") {
+            // a soft vapour trail, then the plane
+            for (let s = 1; s < 7; s++) {
+              const tp = at(r, Math.max(0, t - s * 0.012)); if (!tp) continue;
+              ctx.globalAlpha = edge * (1 - s / 7) * 0.4; ctx.fillStyle = "#FF9A7A";
+              ctx.beginPath(); ctx.arc(tp[0], tp[1], 1.2 * zoomW, 0, TAU); ctx.fill();
+            }
+            ctx.globalAlpha = edge; ctx.translate(p[0], p[1]); ctx.rotate(ang); ctx.scale(size, size);
+            ctx.shadowColor = "rgba(255,210,170,0.9)"; ctx.shadowBlur = 8; ctx.fillStyle = "#FFF4E6"; ctx.fill(PLANE);
+          } else if (r.mode === "train") {
+            // a locomotive and two coaches, each following the curve of the line
+            const gap = 8.5 * gsize / span;
+            for (let c = 2; c >= 0; c--) {
+              const tc = t - c * gap; if (tc < 0) continue;
+              const pc = at(r, tc), qc = at(r, Math.min(1, tc + 0.01)), qc0 = at(r, Math.max(0, tc - 0.01)); if (!pc) continue;
+              ctx.save(); ctx.translate(pc[0], pc[1]); ctx.rotate(qc && qc0 ? Math.atan2(qc[1] - qc0[1], qc[0] - qc0[0]) : ang); ctx.scale(gsize, gsize);
+              ctx.shadowColor = "rgba(95,214,168,0.8)"; ctx.shadowBlur = c ? 0 : 8;
+              carShape(ctx, 7.6, 3.6, c ? "#BDF5DD" : "#E9FFF4", c ? "coach" : "loco");
+              ctx.restore();
+            }
+          } else {
+            ctx.translate(p[0], p[1]); ctx.rotate(ang); ctx.scale(gsize, gsize);
+            const gs = GROUND_STYLE[r.mode]; ctx.shadowColor = gs.color; ctx.shadowBlur = 8;
+            if (r.mode === "ferry") { ctx.fillStyle = "#E6F3FF"; ctx.fill(FERRY); ctx.shadowBlur = 0; ctx.fillStyle = "rgba(8,14,28,0.6)"; ctx.fillRect(-4.5, -1.4, 5, 2.8); }
+            else if (r.mode === "bus") carShape(ctx, 11, 4, "#FFF0C9", "bus");
+            else carShape(ctx, 8, 4, "#EEE8FF", "car");
           }
+          ctx.restore();
         }
       }
       ctx.globalAlpha = 1;
     }
-    ctx.globalCompositeOperation = "source-over";
 
     // airports
     const labelMin = airports.length > 24 ? (airports[Math.min(13, airports.length - 1)]?.n || 1) : 1;
@@ -239,7 +294,7 @@ export function createGlobe(canvas, { world110, world50, onAirport, onRoute, onH
   /* ---------- public API ---------- */
   function setData(d) {
     routes = d.routes.map((r, i) => ({
-      ...r, geo: { type: "LineString", coordinates: [[r.a.lon, r.a.lat], [r.b.lon, r.b.lat]] },
+      mode: "air", ...r, geo: { type: "LineString", coordinates: [[r.a.lon, r.a.lat], [r.b.lon, r.b.lat]] },
       interp: d3.geoInterpolate([r.a.lon, r.a.lat], [r.b.lon, r.b.lat]), seed: (i * 0.618) % 1, dir: i % 2 === 0,
     }));
     airports = [...d.airports].sort((a, b) => b.n - a.n);

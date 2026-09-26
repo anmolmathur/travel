@@ -12,6 +12,31 @@ export const CABINS = ["economy", "premium", "business", "first"];
 export const REASONS = ["leisure", "business", "crew", "other"];
 export const STATUSES = ["flown", "upcoming", "cancelled"];
 
+/* ---------------- modes of transport ---------------- */
+// Most entries are flights. Train, car, bus and ferry legs fill the gaps between them (Milan to Rome by train),
+// so trips connect and the map shows how you really got around. Ground legs use the nearest airport's code as
+// the city anchor, and stay out of the flight statistics (flights, airports, airlines, km flown).
+export const MODES = ["air", "train", "car", "bus", "ferry"];
+export const MODE_INFO = {
+  air: { label: "Flight", icon: "✈", kmh: 780 },
+  train: { label: "Train", icon: "🚆", kmh: 100 },
+  car: { label: "Car", icon: "🚗", kmh: 60 },
+  bus: { label: "Bus", icon: "🚌", kmh: 50 },
+  ferry: { label: "Ferry", icon: "⛴", kmh: 30 },
+};
+/** Roads and rails wind: a ground leg is about this much longer than the straight line between its ends. */
+export const GROUND_DETOUR = 1.2;
+const MODE_ALIAS = { flight: "air", plane: "air", fly: "air", flights: "air", rail: "train", railway: "train", road: "car", drive: "car", taxi: "car", cab: "car", coach: "bus", boat: "ferry", ship: "ferry" };
+/** Normalises loose input ("Rail", "drive", "") to a mode; returns null for something unrecognised. */
+export function cleanMode(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return "air";
+  const m = MODE_ALIAS[s] || s;
+  return MODES.includes(m) ? m : null;
+}
+export const modeOf = f => (MODES.includes(f.mode) ? f.mode : "air");
+export const isAir = f => modeOf(f) === "air";
+
 /* ---------------- travellers ---------------- */
 // Every flight lists who flew it by person id ("me" is the owner). A missing list means the owner alone;
 // an empty list means "not yet assigned" (e.g. imported from someone else's bookings).
@@ -44,10 +69,15 @@ export function hav(a, b) {
   const h = Math.sin(dp / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dl / 2) ** 2;
   return 2 * EARTH_KM * Math.asin(Math.sqrt(h));
 }
-export const estDur = km => Math.round(30 + km / 780 * 60);
+export const estDur = (km, mode = "air") => mode === "air" ? Math.round(30 + km / 780 * 60) : Math.round(10 + km / MODE_INFO[mode].kmh * 60);
 export function durMin(f) {
   if (f.duration && /^\d{1,2}:\d{2}$/.test(f.duration)) { const [h, m] = f.duration.split(":").map(Number); return h * 60 + m; }
-  return estDur(f.distanceKm || 0);
+  return estDur(f.distanceKm || 0, modeOf(f));
+}
+/** Straight-line km for flights; for ground legs a given distance wins, else the straight line plus a detour allowance. */
+export function legKm(a, b, mode = "air", given) {
+  if (mode !== "air" && Number(given) > 0) return Math.round(Number(given));
+  return Math.round(hav(a, b) * (mode === "air" ? 1 : GROUND_DETOUR));
 }
 export const hm = min => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, "0")}`;
 export const dayDiff = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
@@ -55,7 +85,9 @@ export function statusOf(f, today = todayISO()) {
   if (f.status === "cancelled") return "cancelled";
   return f.date > today ? "upcoming" : "flown";
 }
-export function fnPretty(f) { const s = (f.flight || "").toUpperCase(); return s.length > 2 ? s.slice(0, 2) + " " + s.slice(2) : s; }
+export function fnPretty(f) { const s = (f.flight || "").toUpperCase(); return !isAir(f) || s.length <= 2 ? s : s.slice(0, 2) + " " + s.slice(2); }
+/** Short label for a leg: "AI 131", or "Train 12951" / "Car" for ground legs. */
+export function legName(f) { return isAir(f) ? fnPretty(f) : `${MODE_INFO[modeOf(f)].label}${f.flight ? " " + f.flight : ""}`; }
 export function niceDate(d) {
   return new Date(d + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
@@ -76,9 +108,11 @@ export function normalize(doc, ref) {
   f.from = String(f.from || "").trim().toUpperCase();
   f.to = String(f.to || "").trim().toUpperCase();
   f.flight = String(f.flight || "").replace(/[\s*]+/g, "").toUpperCase();
-  if (!f.airline && f.flight) f.airline = f.flight.slice(0, 2);
+  const mode = cleanMode(f.mode);
+  if (mode) f.mode = mode;
+  if (mode === "air" && !f.airline && f.flight) f.airline = f.flight.slice(0, 2);
   const a = ref.ap.get(f.from), b = ref.ap.get(f.to);
-  if (!f.distanceKm && a && b) f.distanceKm = Math.round(hav(a, b));
+  if (!f.distanceKm && a && b) f.distanceKm = legKm(a, b, mode || "air");
   return f;
 }
 
@@ -87,7 +121,9 @@ export function validate(f, ref) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date || "")) return "Date must be YYYY-MM-DD.";
   if (!ref.ap.get(f.from)) return `Unknown departure airport "${f.from || ""}". Use a 3-letter IATA code.`;
   if (!ref.ap.get(f.to)) return `Unknown arrival airport "${f.to || ""}". Use a 3-letter IATA code.`;
-  if (f.from === f.to) return "Departure and arrival are the same airport.";
+  if (cleanMode(f.mode) === null) return `Mode must be one of ${MODES.join(", ")}.`;
+  if (f.from === f.to) return cleanMode(f.mode) === "air" ? "Departure and arrival are the same airport." : "Start and end are the same place. For a ground leg, use the nearest airport code for each city.";
+  if (f.distanceKm !== undefined && f.distanceKm !== "" && !(Number(f.distanceKm) >= 0)) return "Distance must be a number of km.";
   if (f.duration && !/^\d{1,2}:\d{2}$/.test(f.duration)) return "Duration must be h:mm, like 2:10.";
   if (f.time && !/^\d{2}:\d{2}$/.test(f.time)) return "Time must be HH:MM.";
   if (f.status && !STATUSES.includes(f.status)) return `Status must be one of ${STATUSES.join(", ")}.`;
@@ -97,16 +133,17 @@ export function validate(f, ref) {
 /** Build a clean stored document from loose input. Call validate() first. */
 export function toDoc(f, ref, extra = {}, today = todayISO()) {
   const a = ref.ap.get(String(f.from).toUpperCase()), b = ref.ap.get(String(f.to).toUpperCase());
-  const km = Math.round(hav(a, b));
+  const mode = cleanMode(f.mode) || "air", air = mode === "air";
+  const km = legKm(a, b, mode, f.distanceKm);
   const flight = String(f.flight || "").replace(/[\s*]+/g, "").toUpperCase();
-  let duration = f.duration && /^\d{1,2}:\d{2}$/.test(f.duration) ? f.duration.padStart(5, "0") : hm(estDur(km)).padStart(5, "0");
+  let duration = f.duration && /^\d{1,2}:\d{2}$/.test(f.duration) ? f.duration.padStart(5, "0") : hm(estDur(km, mode)).padStart(5, "0");
   const pick = (v, list, d) => (list.includes(v) ? v : d);
   const status = f.status === "cancelled" ? "cancelled" : f.date > today ? "upcoming" : "flown";
   return {
-    date: f.date, time: f.time || "", from: a.code, to: b.code, flight, airline: flight.slice(0, 2),
+    date: f.date, time: f.time || "", mode, from: a.code, to: b.code, flight, airline: air ? flight.slice(0, 2) : "", operator: air ? "" : String(f.operator || "").trim().slice(0, 60),
     distanceKm: km, duration, seat: String(f.seat || "").toUpperCase(), seatType: pick(f.seatType, SEAT_TYPES, ""),
     cabin: pick(f.cabin, CABINS, "economy"), reason: pick(f.reason, REASONS, "leisure"),
-    aircraft: String(f.aircraft || "").toUpperCase(), registration: String(f.registration || "").toUpperCase(),
+    aircraft: air ? String(f.aircraft || "").toUpperCase() : "", registration: air ? String(f.registration || "").toUpperCase() : "",
     trip: f.trip || "", note: f.note || "", status, travellers: cleanTravellers(f.travellers) ?? ["me"], ...extra,
   };
 }
@@ -116,8 +153,10 @@ export function newId(f) {
 }
 
 /* ---------------- statistics ---------------- */
-export function computeStats(list, ref) {
+export function computeStats(all, ref) {
   const countryOf = c => ref.ap.get(c)?.cc;
+  // Flight numbers only count flights; ground legs are tallied separately but still add the countries they reach.
+  const list = all.filter(isAir), groundList = all.filter(f => !isAir(f));
   const s = {
     n: list.length, km: 0, min: 0, airports: new Map(), carriers: new Map(), countries: new Map(), planes: new Map(), routes: new Map(),
     cabin: {}, reason: {}, seat: {}, years: new Map(), months: Array(12).fill(0), dows: Array(7).fill(0), ym: new Map(),
@@ -143,6 +182,12 @@ export function computeStats(list, ref) {
     const dt = new Date(f.date + "T00:00:00Z"); s.months[dt.getUTCMonth()]++; s.dows[(dt.getUTCDay() + 6) % 7]++;
     if (countryOf(f.from) && countryOf(f.from) === countryOf(f.to)) s.dom++; else s.intl++;
     s.bands[d < 800 ? 0 : d < 2500 ? 1 : d < 5000 ? 2 : 3]++;
+  }
+  s.ground = { n: 0, km: 0, min: 0, by: {} };
+  for (const f of groundList) {
+    const d = f.distanceKm || 0, m = durMin(f), g = s.ground.by[modeOf(f)] ||= { n: 0, km: 0, min: 0 };
+    g.n++; g.km += d; g.min += m; s.ground.n++; s.ground.km += d; s.ground.min += m;
+    for (const c of [f.from, f.to]) { const cc = countryOf(c); if (cc && (!s.countries.has(cc) || f.date < s.countries.get(cc))) s.countries.set(cc, f.date); }
   }
   const byKm = [...list].sort((a, b) => (b.distanceKm || 0) - (a.distanceKm || 0));
   s.longest = byKm[0]; s.shortest = byKm[byKm.length - 1];
@@ -189,10 +234,10 @@ function flagsFor(flights, today) {
       if (!seenRoute.has(k)) { seenRoute.set(k, f); continue; }
       const o = seenRoute.get(k);
       if (f.reviewed) continue;
-      const codeshare = o.airline !== f.airline;
+      const codeshare = isAir(o) && isAir(f) && o.airline !== f.airline;
       const msg = codeshare
         ? `${fnPretty(o)} and ${fnPretty(f)} fly the same route on the same day. This is usually one codeshare flight logged twice.`
-        : `${fnPretty(f)} ${f.from}→${f.to} appears twice on ${niceDate(date)}.`;
+        : `${legName(f)} ${f.from}→${f.to} appears twice on ${niceDate(date)}.`;
       groups.push({ sev: "high", kind: codeshare ? "codeshare" : "duplicate", title: codeshare ? "Codeshare logged twice" : "Duplicate entry", msg, items: [o, f], suggest: f.id });
       add(f.id, "high", msg); handled.add(f.id); handled.add(o.id);
     }
@@ -202,7 +247,7 @@ function flagsFor(flights, today) {
     const starts = [...bal.values()].filter(v => v > 0).reduce((a, v) => a + v, 0);
     const items = rest.filter(f => !f.reviewed);
     if (starts > 1 && items.length > 1) {
-      const msg = `These ${items.length} flights on ${niceDate(date)} can't all be one journey: you'd have to be in two places at once. One or more were probably booked and not taken.`;
+      const msg = `These ${items.length} ${items.every(isAir) ? "flights" : "legs"} on ${niceDate(date)} can't all be one journey: you'd have to be in two places at once. One or more were probably booked and not taken.`;
       groups.push({ sev: "high", kind: "conflict", title: "Itinerary doesn't connect", msg, items });
       items.forEach(f => add(f.id, "high", msg));
     }
@@ -211,11 +256,11 @@ function flagsFor(flights, today) {
   const lowGroups = new Map();
   for (let i = 0; i < live.length; i++) {
     const f = live[i];
-    if (f.reviewed || handled.has(f.id)) continue;
+    if (f.reviewed || handled.has(f.id) || !isAir(f)) continue;
     for (let j = i + 1; j < live.length; j++) {
       const g = live[j], dd = dayDiff(f.date, g.date);
       if (dd > 4) break;
-      if (g.from !== f.from || g.to !== f.to || dd <= 0) continue;
+      if (g.from !== f.from || g.to !== f.to || dd <= 0 || !isAir(g)) continue;
       const back = live.slice(i + 1, j).some(k => k.to === f.from);
       if (!back) {
         const msg = `${f.from}→${f.to} again on ${niceDate(g.date)} with no return flight in between. The ${niceDate(f.date)} booking may have been changed.`;
@@ -241,7 +286,7 @@ function flagsFor(flights, today) {
 
   for (const f of flights) {
     if (f.status === "upcoming" && f.date < today && !f.reviewed) {
-      const msg = `${fnPretty(f) || f.from + "→" + f.to} on ${niceDate(f.date)} was planned. Did you take it?`;
+      const msg = `${legName(f) || f.from + "→" + f.to} on ${niceDate(f.date)} was planned. Did you take it?`;
       groups.push({ sev: "med", kind: "past-planned", title: "Planned flight date has passed", msg, items: [f] });
       add(f.id, "med", msg);
     }
@@ -347,7 +392,10 @@ export function fromOpenFlightsCSV(text) {
     const g = k => (ix(k) >= 0 ? (r[ix(k)] || "").trim() : "");
     const [date, time = ""] = g("Date").split(" ");
     const st = g("Status");
+    const rawMode = g("Mode"), mode = cleanMode(rawMode), ground = mode && mode !== "air";
+    const miles = parseFloat(g("Distance"));
     return {
+      mode: mode ?? rawMode, ...(ground ? { operator: g("Airline"), distanceKm: miles > 0 ? Math.round(miles * 1.609344) : undefined } : {}),
       date, time: time.slice(0, 5), from: g("From").toUpperCase(), to: g("To").toUpperCase(),
       flight: g("Flight_Number").replace(/[*\s]/g, "").toUpperCase(), duration: g("Duration"), seat: g("Seat"),
       seatType: seat[g("Seat_Type")] || "", cabin: cab[g("Class")] || "economy", reason: rs[g("Reason")] || "leisure",
@@ -362,10 +410,10 @@ export function fromOpenFlightsCSV(text) {
 export function toOpenFlightsCSV(flights, ref, today = todayISO()) {
   const invS = { window: "W", aisle: "A", middle: "M" }, invC = { economy: "Y", premium: "P", business: "C", first: "F" }, invR = { leisure: "L", business: "B", crew: "C", other: "O" };
   const q = s => (/[",\n]/.test(String(s ?? "")) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ""));
-  const lines = ["Date,From,To,Flight_Number,Airline,Distance,Duration,Seat,Seat_Type,Class,Reason,Plane,Registration,Trip,Note,Status,Travellers"];
+  const lines = ["Date,From,To,Flight_Number,Airline,Distance,Duration,Seat,Seat_Type,Class,Reason,Plane,Registration,Trip,Note,Status,Travellers,Mode"];
   [...flights].sort((a, b) => b.date.localeCompare(a.date)).forEach(f => lines.push([
-    f.date + (f.time ? ` ${f.time}:00` : ""), f.from, f.to, f.flight, airlineName(ref, f.airline), Math.round((f.distanceKm || 0) / 1.609344),
-    f.duration, f.seat, invS[f.seatType] || "", invC[f.cabin] || "Y", invR[f.reason] || "L", f.aircraft, f.registration, f.trip, f.note, statusOf(f, today), travellersOf(f).join(";") || "unassigned",
+    f.date + (f.time ? ` ${f.time}:00` : ""), f.from, f.to, f.flight, isAir(f) ? airlineName(ref, f.airline) : f.operator || "", Math.round((f.distanceKm || 0) / 1.609344),
+    f.duration, f.seat, invS[f.seatType] || "", invC[f.cabin] || "Y", invR[f.reason] || "L", f.aircraft, f.registration, f.trip, f.note, statusOf(f, today), travellersOf(f).join(";") || "unassigned", modeOf(f),
   ].map(q).join(",")));
   return lines.join("\n") + "\n";
 }
@@ -374,7 +422,7 @@ export function toOpenFlightsCSV(flights, ref, today = todayISO()) {
 export function flightsAsText(flights, ref, today = todayISO()) {
   return [...flights].sort((a, b) => a.date.localeCompare(b.date)).map(f => {
     const A = ref.ap.get(f.from), B = ref.ap.get(f.to);
-    return [f.date, f.flight || "-", `${f.from}(${A?.city || ""},${A?.cc || ""})`, `${f.to}(${B?.city || ""},${B?.cc || ""})`,
-      airlineName(ref, f.airline), `${f.distanceKm || 0}km`, f.duration || "", f.aircraft || "", f.seat || "", f.cabin || "", statusOf(f, today), travellersOf(f).join("+") || "unassigned"].join(" | ");
+    return [f.date, isAir(f) ? f.flight || "-" : `${modeOf(f).toUpperCase()}${f.flight ? " " + f.flight : ""}`, `${f.from}(${A?.city || ""},${A?.cc || ""})`, `${f.to}(${B?.city || ""},${B?.cc || ""})`,
+      isAir(f) ? airlineName(ref, f.airline) : f.operator || "-", `${f.distanceKm || 0}km`, f.duration || "", f.aircraft || "", f.seat || "", f.cabin || "", statusOf(f, today), travellersOf(f).join("+") || "unassigned"].join(" | ");
   }).join("\n");
 }
