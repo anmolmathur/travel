@@ -35,6 +35,22 @@ export function createService({ db, ref, gemini, lookupProvider }) {
     const err = validate(normalize(next, ref), ref); if (err) throw new InputError(err);
     return db.put(id, next);
   }
+  /** Swap one airport for another on every matching flight (or only the given ids), e.g. HKT picked by mistake for HKG. */
+  function replaceAirport(oldCode, newCode, ids) {
+    const from = String(oldCode || "").trim().toUpperCase(), to = String(newCode || "").trim().toUpperCase();
+    if (!ref.ap.get(to)) throw new InputError(`Unknown airport "${to}". Use a 3-letter IATA code.`);
+    if (from === to) throw new InputError("That's the same airport.");
+    const only = Array.isArray(ids) && ids.length ? new Set(ids) : null;
+    const hits = all().filter(f => (f.from === from || f.to === from) && (!only || only.has(f.id)));
+    if (!hits.length) throw new InputError(`No flights use ${from}.`, 404);
+    const swap = f => ({ ...f, from: f.from === from ? to : f.from, to: f.to === from ? to : f.to, distanceKm: undefined });
+    const bad = hits.find(f => { const n = swap(f); return n.from === n.to; });
+    if (bad) throw new InputError(`That would make ${fnPrettyRoute(bad)} start and end at ${to}.`);
+    for (const f of hits) replace(f.id, swap(f));
+    return { replaced: hits.length, ids: hits.map(f => f.id), from, to };
+  }
+  const fnPrettyRoute = f => `${f.flight || "the flight"} ${f.from}→${f.to} on ${f.date}`;
+
   function remove(id) { if (!db.del(id)) throw new InputError("No flight with that id.", 404); return { deleted: id }; }
 
   function importCSV(text) {
@@ -194,7 +210,7 @@ export function createService({ db, ref, gemini, lookupProvider }) {
   }
 
   return {
-    all, create, replace, patch, remove, importCSV, query, stats, reviewQueue, trips,
+    all, create, replace, patch, remove, replaceAirport, importCSV, query, stats, reviewQueue, trips,
     exportCSV: () => toOpenFlightsCSV(all(), ref, today()),
     aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup,
     features: { ai: Boolean(gemini), lookup: Boolean(lookupProvider) },

@@ -61,6 +61,8 @@ async function boot() {
     onAirport: code => showAirport(code),
     onRoute: r => { ui.q = `${r.a.code} ${r.b.code}`; $("#q").value = ui.q; go("logbook"); renderTable(); },
     onHover: h => tip(h),
+    onWheelHint: () => { const z = $("#zoomHint"); z.hidden = false; clearTimeout(z.t); z.t = setTimeout(() => (z.hidden = true), 1400); },
+    isFree: () => isFullscreen(),
   });
   fillLists();
   await reload();
@@ -160,8 +162,23 @@ function showAirport(code) {
   el.innerHTML = `<button class="btn ghost small x" type="button" aria-label="Close">✕</button>
     <p class="eyebrow">${flag(a.cc, 18)} ${esc(countryName(REF, a.cc))}</p><h3>${code} · ${esc(a.city || "")}</h3><div class="muted">${esc(a.name)}</div>
     <dl><dt>Visits</dt><dd class="mono">${fs.length}</dd><dt>First</dt><dd>${fs[0] ? niceDate(fs[0].date) : "—"}</dd><dt>Latest</dt><dd>${fs.length ? niceDate(fs.at(-1).date) : "—"}</dd><dt>Most with</dt><dd class="mono">${top || "—"}</dd><dt>Position</dt><dd class="mono">${fmtLat(a.lat)} ${fmtLon(a.lon)}</dd></dl>
-    <div class="row"><button class="btn small" type="button" data-show="${code}">Show flights</button></div>`;
+    <div class="row"><button class="btn small" type="button" data-show="${code}">Show flights</button>${me.canWrite ? `<button class="btn small ghost" type="button" data-wrong>Wrong airport?</button>` : ""}</div>
+    <form class="fix" hidden><label class="muted" for="fixTo">Replace ${code} with</label><div class="inline"><input id="fixTo" list="apList" placeholder="e.g. HKG" maxlength="40" autocomplete="off"><button class="btn small primary" type="submit">Replace in ${flights.filter(f => f.from === code || f.to === code).length} flights</button></div><span class="hint" id="fixHint"></span></form>`;
   el.querySelector(".x").onclick = () => { el.hidden = true; globe.setHighlight(null); };
+  const wrong = el.querySelector("[data-wrong]"), fix = el.querySelector(".fix");
+  if (wrong) wrong.onclick = () => { fix.hidden = false; fix.querySelector("input").focus(); };
+  if (fix) {
+    fix.querySelector("input").oninput = e => { const c = e.target.value.trim().slice(0, 3).toUpperCase(), b = ap(c); $("#fixHint").textContent = c.length === 3 ? (b ? `${b.city || b.name}, ${countryName(REF, b.cc)}` : "Unknown airport code") : ""; };
+    fix.onsubmit = async e => {
+      e.preventDefault();
+      const to = fix.querySelector("input").value.trim().slice(0, 3).toUpperCase();
+      try {
+        const r = await api("/api/airports/replace", { method: "POST", body: JSON.stringify({ from: code, to }) });
+        el.hidden = true; await reload();
+        toast(`Replaced ${code} with ${to} on ${r.replaced} flight${r.replaced > 1 ? "s" : ""}`, async () => { await api("/api/airports/replace", { method: "POST", body: JSON.stringify({ from: to, to: code, ids: r.ids }) }); await reload(); });
+      } catch (err) { $("#fixHint").textContent = err.message; }
+    };
+  }
   el.querySelector("[data-show]").onclick = () => { ui.q = code; $("#q").value = code; go("logbook"); renderTable(); };
   globe.setHighlight(new Set(fs.map(f => f.id)));
 }
@@ -535,11 +552,19 @@ async function replay() {
 function go(tab, initial) {
   if (!["overview", "trips", "insights", "logbook", "review", "add"].includes(tab)) tab = "overview";
   if (tab === "add" && !me.canWrite) tab = "overview";
-  ui.tab = tab;
+  ui.tab = tab; document.body.dataset.tab = tab;
   $$(".nav a").forEach(a => a.toggleAttribute("aria-current", a.dataset.tab === tab)); $$(".nav a[aria-current]").forEach(a => a.setAttribute("aria-current", "page"));
   $$(".panel").forEach(p => (p.hidden = p.id !== "p-" + tab));
   if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
   if (!initial || REF) render();
+}
+function isFullscreen() { return document.fullscreenElement === $("#hero") || $("#hero").classList.contains("pseudo-fs"); }
+async function toggleFullscreen() {
+  const hero = $("#hero");
+  if (document.fullscreenElement) { await document.exitFullscreen().catch(() => {}); return; }
+  if (hero.classList.contains("pseudo-fs")) { hero.classList.remove("pseudo-fs"); document.body.style.overflow = ""; return; }
+  try { await hero.requestFullscreen(); }
+  catch { hero.classList.add("pseudo-fs"); document.body.style.overflow = "hidden"; } // iPhone Safari has no element full screen
 }
 function showLogin() { $("#login").hidden = false; $("#pw").focus(); }
 
@@ -560,6 +585,15 @@ function wire() {
     $("#globeWrap").classList.toggle("flat", b.dataset.view === "flat"); requestAnimationFrame(() => { globe.setMode(b.dataset.view); focusVisible(); });
   });
   $("#replayBtn").onclick = replay;
+  $("#fsBtn").onclick = toggleFullscreen;
+  $("#zIn").onclick = () => globe.zoomBy(1.5);
+  $("#zOut").onclick = () => globe.zoomBy(1 / 1.5);
+  $("#zFit").onclick = () => focusVisible();
+  $("#scrollCue").onclick = e => { e.preventDefault(); window.scrollTo({ top: $("#hero").offsetHeight, behavior: "smooth" }); };
+  document.addEventListener("keydown", e => { if ((e.key === "f" || e.key === "F") && !e.metaKey && !e.ctrlKey && !/input|textarea|select/i.test(document.activeElement?.tagName || "")) toggleFullscreen(); });
+  document.addEventListener("fullscreenchange", () => $("#hero").classList.toggle("is-fs", isFullscreen()));
+  const setBar = () => document.documentElement.style.setProperty("--bar-h", $(".bar").offsetHeight + "px");
+  new ResizeObserver(setBar).observe($(".bar")); setBar();
   $("#addBtn").onclick = () => { resetForm(); go("add"); $("#iFlight").focus(); };
   $("#askBtn").onclick = openAsk; $("#drawerClose").onclick = () => ($("#drawer").hidden = true);
   $("#askForm").addEventListener("submit", e => { e.preventDefault(); ask($("#askInput").value); });
