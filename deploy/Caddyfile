@@ -1,0 +1,5 @@
+# Caddy: add this block to your Caddyfile, then `caddy reload`. Caddy gets the TLS certificate itself.
+wander.anmolmathur.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3040
+}

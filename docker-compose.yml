@@ -1,0 +1,15 @@
+services:
+  wander:
+    image: ghcr.io/anmolmathur/travel:latest
+    build: .
+    container_name: wander
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - wander-data:/data
+    # Only reachable from the host; the reverse proxy (Caddy, nginx, Traefik or cloudflared) publishes it.
+    ports:
+      - "127.0.0.1:3040:3000"
+
+volumes:
+  wander-data:

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Wander</title>
+<meta name="description" content="A personal flight logbook: every flight on a globe, with lifetime statistics, trips and AI-assisted entry.">
+<meta name="theme-color" content="#060A13">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=B612+Mono:wght@400;700&family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Instrument+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="sky" aria-hidden="true"></div>
+
+<header class="bar">
+  <a class="logo" href="#overview" aria-label="Wander home">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#FF8A5B"/><stop offset="1" stop-color="#FF4D8D"/></linearGradient></defs><circle cx="16" cy="16" r="13" fill="none" stroke="url(#lg)" stroke-width="2"/><path d="M5 20c6-9 16-12 22-9" fill="none" stroke="url(#lg)" stroke-width="2" stroke-linecap="round"/><circle cx="27" cy="11" r="2.4" fill="#FFD29A"/></svg>
+    <span>Wander</span>
+  </a>
+  <nav class="nav" id="nav" aria-label="Sections">
+    <a href="#overview" data-tab="overview">Atlas</a>
+    <a href="#trips" data-tab="trips">Trips</a>
+    <a href="#insights" data-tab="insights">Insights</a>
+    <a href="#logbook" data-tab="logbook">Logbook</a>
+    <a href="#review" data-tab="review">Review <b class="count" id="rvCount" hidden></b></a>
+    <a href="#add" data-tab="add" class="owner-only">Add</a>
+  </nav>
+  <div class="bar-end">
+    <button class="btn ghost ai-only" id="askBtn" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l1.8 4.7L16.5 8.5l-4.7 1.8L10 15l-1.8-4.7L3.5 8.5l4.7-1.8z" fill="currentColor"/></svg>Ask</button>
+    <button class="btn primary owner-only" id="addBtn" type="button">+ Flight</button>
+    <button class="btn ghost" id="signBtn" type="button" hidden>Sign out</button>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow" id="heroEyebrow">Your flights</p>
+      <h1 class="hero-km"><span id="heroKm">0</span><small> km</small></h1>
+      <p class="hero-sub" id="heroSub">&nbsp;</p>
+      <div class="hero-stats" id="heroStats"></div>
+      <div class="hero-ctl">
+        <div class="seg" role="group" aria-label="Map style">
+          <button type="button" data-view="globe" aria-pressed="true">Globe</button>
+          <button type="button" data-view="flat" aria-pressed="false">Flat map</button>
+        </div>
+        <button class="btn ghost" id="replayBtn" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 4l10 6-10 6z" fill="currentColor"/></svg><span>Replay the years</span></button>
+        <label class="toggle"><input type="checkbox" id="fCancelled"> Show not-flown</label>
+      </div>
+    </div>
+    <div class="globe-wrap" id="globeWrap">
+      <canvas id="globe" aria-label="Globe showing every route flown. Drag to rotate, scroll to zoom." role="img"></canvas>
+      <div class="globe-tip" id="tip" hidden></div>
+      <div class="globe-focus" id="focus" hidden></div>
+      <div class="globe-legend"><span><i class="l-flown"></i>Flown</span><span><i class="l-up"></i>Upcoming</span><span><i class="l-home"></i>Home</span></div>
+    </div>
+  </section>
+
+  <section class="ribbon" aria-label="Filter by year">
+    <button class="yr-all" type="button" id="yAll">All years</button>
+    <div class="years" id="years"></div>
+    <select id="fAirline" class="sel" aria-label="Filter by airline"><option value="all">All airlines</option></select>
+  </section>
+
+  <section class="panel" id="p-overview"></section>
+  <section class="panel" id="p-trips" hidden></section>
+  <section class="panel" id="p-insights" hidden></section>
+  <section class="panel" id="p-logbook" hidden>
+    <div class="tools">
+      <input type="search" id="q" placeholder="Search flight, airport, city, airline, aircraft, seat…" aria-label="Search flights">
+      <select class="sel" id="fStatus" aria-label="Status">
+        <option value="all">Every status</option><option value="flown">Flown</option><option value="upcoming">Upcoming</option><option value="cancelled">Not flown</option><option value="flagged">Needs review</option>
+      </select>
+      <button class="btn owner-only" id="importBtn" type="button">Import CSV</button>
+      <input type="file" id="importFile" accept=".csv,text/csv" hidden>
+      <a class="btn" id="exportBtn" href="/api/export.csv">Export CSV</a>
+    </div>
+    <div class="tablewrap"><table class="log">
+      <thead><tr>
+        <th data-k="date">Date</th><th data-k="flight">Flight</th><th data-k="route">Route</th><th data-k="airline">Airline</th>
+        <th data-k="distanceKm" class="r">km</th><th data-k="dur" class="r">Time</th><th data-k="aircraft">Aircraft</th><th data-k="seat">Seat</th><th data-k="status">Status</th><th class="r owner-only"></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table></div>
+    <div class="more" id="more"></div>
+  </section>
+  <section class="panel" id="p-review" hidden></section>
+  <section class="panel" id="p-add" hidden>
+    <div class="add-grid">
+      <form class="card form" id="form" autocomplete="off" novalidate>
+        <div class="card-head"><h2 id="formTitle">Log a flight</h2><p id="formSub">Airline, airports, distance and duration fill in as you type.</p></div>
+        <div class="fields">
+          <div class="field"><label for="iDate">Date</label><input type="date" id="iDate" required></div>
+          <div class="field"><label for="iFlight">Flight number</label><div class="inline"><input id="iFlight" placeholder="6E 5297"><button class="btn small lookup-only" type="button" id="lookupBtn">Look up</button></div><span class="hint" id="hFlight"></span></div>
+          <div class="field"><label for="iTime">Departs (local)</label><input type="time" id="iTime"></div>
+          <div class="field"><label for="iFrom">From</label><input id="iFrom" list="apList" placeholder="BOM" required><span class="hint" id="hFrom"></span></div>
+          <div class="field"><label for="iTo">To</label><input id="iTo" list="apList" placeholder="DEL" required><span class="hint" id="hTo"></span></div>
+          <div class="field"><label for="iDur">Duration (h:mm)</label><input id="iDur" placeholder="auto"><span class="hint" id="hDur"></span></div>
+          <div class="field"><label for="iAircraft">Aircraft</label><input id="iAircraft" list="acList" placeholder="32N"><span class="hint" id="hAircraft"></span></div>
+          <div class="field"><label for="iReg">Registration</label><input id="iReg" placeholder="VT-ISK"></div>
+          <div class="field"><label for="iSeat">Seat</label><input id="iSeat" placeholder="27C"></div>
+          <div class="field"><label for="iSeatType">Seat type</label><select id="iSeatType"><option value="">Not recorded</option><option value="window">Window</option><option value="middle">Middle</option><option value="aisle">Aisle</option></select></div>
+          <div class="field"><label for="iCabin">Cabin</label><select id="iCabin"><option value="economy">Economy</option><option value="premium">Premium economy</option><option value="business">Business</option><option value="first">First</option></select></div>
+          <div class="field"><label for="iReason">Reason</label><select id="iReason"><option value="leisure">Leisure</option><option value="business">Business</option><option value="crew">Crew</option><option value="other">Other</option></select></div>
+          <div class="field"><label for="iTrip">Trip</label><input id="iTrip" placeholder="Spain 2026"></div>
+          <div class="field wide"><label for="iNote">Note or booking reference</label><input id="iNote" placeholder="Anything worth remembering"></div>
+        </div>
+        <p class="err" id="formErr" role="alert"></p>
+        <div class="row"><button class="btn primary" type="submit" id="saveBtn">Save flight</button><button class="btn ghost" type="button" id="resetBtn">Clear</button></div>
+        <datalist id="apList"></datalist><datalist id="acList"></datalist>
+      </form>
+      <div class="card smart">
+        <div class="card-head"><h2><span class="spark">✦</span> Smart add</h2><p>Paste a booking confirmation or itinerary, or drop a boarding-pass screenshot. Gemini finds every flight; you check them before they're saved.</p></div>
+        <textarea id="smartText" rows="7" placeholder="e.g. Booking ABC12D — AI 131 Mumbai to London Heathrow, 14 Nov 2026 13:30, seat 22J"></textarea>
+        <label class="drop" id="drop" tabindex="0"><input type="file" id="smartImg" accept="image/*" hidden><span id="dropText">Drop a boarding pass or ticket image, or click to choose</span></label>
+        <div class="row"><button class="btn primary" id="smartGo" type="button">Find flights</button><span class="muted" id="smartStatus"></span></div>
+        <div class="parsed" id="parsed"></div>
+        <p class="fine">A booking reference alone can't be looked up: airlines only show bookings on their own sites. The confirmation email always lists the flights, so paste that instead.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer" hidden aria-label="Ask about your flights">
+  <div class="drawer-head"><h2><span class="spark">✦</span> Ask your logbook</h2><button class="btn ghost small" id="drawerClose" type="button" aria-label="Close">✕</button></div>
+  <div class="chat" id="chat"></div>
+  <div class="suggest" id="suggest"></div>
+  <form class="ask" id="askForm"><input id="askInput" placeholder="How many times have I flown to Delhi?" autocomplete="off"><button class="btn primary" type="submit">Ask</button></form>
+</aside>
+
+<div class="modal" id="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><button class="btn ghost small modal-x" type="button" id="modalX" aria-label="Close">✕</button><div id="modalBody"></div></div></div>
+
+<div class="login" id="login" hidden>
+  <form class="login-card" id="loginForm">
+    <div class="logo big"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="13" fill="none" stroke="#FF6F73" stroke-width="2"/><path d="M5 20c6-9 16-12 22-9" fill="none" stroke="#FF6F73" stroke-width="2" stroke-linecap="round"/><circle cx="27" cy="11" r="2.4" fill="#FFD29A"/></svg><span>Wander</span></div>
+    <p>This logbook is private.</p>
+    <label for="pw" class="sr">Password</label><input type="password" id="pw" placeholder="Password" autocomplete="current-password" required>
+    <button class="btn primary" type="submit">Sign in</button>
+    <p class="err" id="loginErr" role="alert"></p>
+  </form>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="/vendor/d3.min.js"></script>
+<script src="/vendor/topojson-client.min.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
