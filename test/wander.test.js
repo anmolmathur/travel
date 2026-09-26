@@ -123,3 +123,31 @@ test("AI endpoints explain when no key is configured", async () => {
     assert.match((await r.json()).error, /GEMINI_API_KEY/);
   });
 });
+
+test("Gemini client switches to a current model when the configured one is gone", async () => {
+  const calls = [];
+  const reply = (status, body) => ({ ok: status < 400, status, json: async () => body });
+  const fake = async url => {
+    calls.push(url);
+    if (url.includes("/models?")) return reply(200, { models: [
+      { name: "models/gemini-3.0-flash", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3.0-flash-lite", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/gemini-3.0-pro-preview", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] },
+    ] });
+    if (url.includes("gemini-2.5-flash")) return reply(404, { error: { message: "models/gemini-2.5-flash is not found for API version v1beta" } });
+    return reply(200, { candidates: [{ content: { parts: [{ text: '{"flights":[{"date":"2026-01-01","from":"BOM","to":"DEL"}]}' }] } }] });
+  };
+  const g = createGemini({ apiKey: "k", model: "gemini-2.5-flash", fetchImpl: fake });
+  const out = await g.extract({ text: "x", today: "2026-01-01" });
+  assert.equal(out.length, 1, "wrapped array is unwrapped");
+  assert.equal(g.model, "gemini-3.0-flash");
+  assert.ok(calls.at(-1).includes("gemini-3.0-flash:generateContent"));
+});
+
+test("Gemini client explains blocked answers and bad keys", async () => {
+  const blocked = createGemini({ apiKey: "k", model: "m", fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ promptFeedback: { blockReason: "SAFETY" } }) }) });
+  await assert.rejects(blocked.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /no answer \(SAFETY\)/);
+  const badKey = createGemini({ apiKey: "k", model: "m", fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: { message: "API key not valid. Please pass a valid API key." } }) }) });
+  await assert.rejects(badKey.ask({ question: "q", table: "", summary: "", today: "2026-01-01" }), /rejected the API key/);
+});

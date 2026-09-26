@@ -1,37 +1,107 @@
 // Thin Gemini REST client plus the prompts behind Wander's AI features.
 // The key never leaves the server.
 
-const API = "https://generativelanguage.googleapis.com/v1beta/models";
+const API = "https://generativelanguage.googleapis.com/v1beta";
+const TIMEOUT_MS = 85_000; // stay under Cloudflare's 100-second limit
+
+const fail = (message, status = 502) => Object.assign(new Error(message), { status });
+/** Models sometimes wrap a requested array in an object ({"flights": [...]}); unwrap it. */
+export const asArray = out => Array.isArray(out) ? out : out && typeof out === "object" ? (Object.values(out).find(Array.isArray) || []) : [];
+
+/** Picks the newest stable Gemini model of a family ("flash" or "pro") from a ListModels response. */
+export function pickModel(names, family) {
+  const version = n => parseFloat((n.match(/^gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0);
+  const ok = names.filter(n => n.startsWith("gemini-") && n.includes(`-${family}`)
+    && !/(lite|tts|image|audio|live|embedding|vision|thinking|computer|robotics|8b)/.test(n));
+  ok.sort((a, b) => version(b) - version(a) || Number(/preview|exp/.test(a)) - Number(/preview|exp/.test(b)) || a.length - b.length);
+  return ok[0] || null;
+}
 
 export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
   if (!apiKey) return null;
+  const chosen = { fast: model, smart: smartModel || model };
+  const headers = { "content-type": "application/json", "x-goog-api-key": apiKey };
+
+  async function request(url, init) {
+    try { return await fetchImpl(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
+    catch (e) {
+      if (e?.name === "TimeoutError" || e?.name === "AbortError") throw fail("Gemini took too long to answer. Try again, or set GEMINI_MODEL_SMART to a faster model.", 504);
+      throw fail(`Couldn't reach Gemini (${e?.cause?.code || e?.message || "network error"}).`);
+    }
+  }
+
+  async function listModels() {
+    const res = await request(`${API}/models?pageSize=1000`, { headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw fail(`Gemini rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`);
+    return (data.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => m.name.replace(/^models\//, ""));
+  }
+
+  async function post(m, body) {
+    const res = await request(`${API}/models/${encodeURIComponent(m)}:generateContent`, { method: "POST", headers, body: JSON.stringify(body) });
+    return { res, data: await res.json().catch(() => ({})) };
+  }
 
   async function generate({ parts, json = true, useSmart = false, temperature = 0.3, system }) {
-    const m = useSmart ? smartModel || model : model;
+    const slot = useSmart ? "smart" : "fast";
     const body = {
       contents: [{ role: "user", parts }],
       generationConfig: { temperature, ...(json ? { responseMimeType: "application/json" } : {}) },
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     };
-    const res = await fetchImpl(`${API}/${encodeURIComponent(m)}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = new Error(data?.error?.message || `Gemini returned HTTP ${res.status}`);
-      err.status = res.status === 429 ? 429 : 502;
-      throw err;
+    let { res, data } = await post(chosen[slot], body);
+    const msg = data?.error?.message || "";
+    // The configured model may have been renamed or retired: find the current one and retry once.
+    if (res.status === 404 || (res.status === 400 && /not (found|supported)|unknown model|is not available/i.test(msg))) {
+      const names = await listModels();
+      const alt = pickModel(names, useSmart ? "pro" : "flash") || pickModel(names, "flash");
+      if (alt && alt !== chosen[slot]) {
+        console.warn(`Gemini model "${chosen[slot]}" is unavailable (${msg || res.status}); using "${alt}". Set GEMINI_MODEL${useSmart ? "_SMART" : ""}=${alt} to silence this.`);
+        chosen[slot] = alt;
+        ({ res, data } = await post(alt, body));
+      }
     }
-    const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("");
+    if (!res.ok) {
+      const m = data?.error?.message || `HTTP ${res.status}`;
+      if (res.status === 429) throw fail(`Gemini rate limit or quota reached: ${m}`, 429);
+      if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`);
+      throw fail(`Gemini error (${chosen[slot]}): ${m}`);
+    }
+    const cand = data.candidates?.[0];
+    const text = (cand?.content?.parts || []).filter(p => !p.thought).map(p => p.text || "").join("").trim();
+    if (!text) {
+      const why = data.promptFeedback?.blockReason || cand?.finishReason || "no content";
+      throw fail(`Gemini returned no answer (${why}). Try rephrasing, or a smaller image.`);
+    }
     if (!json) return text;
-    try { return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "")); }
-    catch { const e = new Error("Gemini returned something that wasn't JSON."); e.status = 502; throw e; }
+    return parseJSON(text);
+  }
+
+  function parseJSON(text) {
+    const clean = text.replace(/^```(?:json)?\s*|\s*```$/g, "");
+    try { return JSON.parse(clean); } catch { /* fall through */ }
+    const a = clean.search(/[\[{]/), b = Math.max(clean.lastIndexOf("]"), clean.lastIndexOf("}"));
+    if (a >= 0 && b > a) { try { return JSON.parse(clean.slice(a, b + 1)); } catch { /* fall through */ } }
+    throw fail("Gemini's answer wasn't in the expected format. Try again.");
+  }
+
+  async function status() {
+    const out = { configured: true, model: chosen.fast, smartModel: chosen.smart };
+    try {
+      out.available = (await listModels()).filter(n => n.startsWith("gemini-"));
+      const reply = await generate({ parts: [{ text: 'Reply with the JSON {"ok":true}' }], temperature: 0 });
+      out.fast = reply?.ok === true ? "ok" : `unexpected reply: ${JSON.stringify(reply).slice(0, 80)}`;
+      const t0 = Date.now();
+      const r2 = await generate({ parts: [{ text: "Say OK." }], json: false, useSmart: true, temperature: 0 });
+      out.smart = `ok (${Date.now() - t0} ms): ${r2.slice(0, 40)}`;
+    } catch (e) { out.error = e.message; }
+    out.model = chosen.fast; out.smartModel = chosen.smart;
+    return out;
   }
 
   return {
-    model,
+    get model() { return chosen.fast; },
+    status,
     /** Pull flight segments out of booking text and/or a ticket image. */
     async extract({ text, image, today }) {
       const parts = [{ text: `You extract flight segments from travel bookings, e-tickets, itineraries and boarding passes.
@@ -46,8 +116,7 @@ If a year is missing, use the next occurrence on or after today for bookings, el
 Never invent flights. If there are none, return [].
 ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
       if (image) parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } });
-      const out = await generate({ parts, temperature: 0.1 });
-      return Array.isArray(out) ? out : Array.isArray(out?.flights) ? out.flights : [];
+      return asArray(await generate({ parts, temperature: 0.1 }));
     },
 
     /** Answer a free-form question about the logbook. */
@@ -79,7 +148,7 @@ SUMMARY:\n${summary}\n\nFLIGHTS:\n${table}` }],
 Return JSON: [{"id":"...","name":"...","summary":"..."}] in the same order.
 TRIPS:\n${JSON.stringify(trips)}` }],
       });
-      return Array.isArray(out) ? out : [];
+      return asArray(out);
     },
 
     /** Suggest new destinations reachable from home. */
@@ -93,7 +162,7 @@ Suggest 6 destinations this traveller hasn't been to, mixing easy short-haul and
 Prefer places with direct or one-stop flights from home. Return JSON:
 [{"iata":"airport code","city":"...","country":"...","why":"max 20 words, specific","bestMonths":"e.g. Oct–Mar","flightTime":"approx, e.g. 3h direct"}]` }],
       });
-      return Array.isArray(out) ? out : [];
+      return asArray(out);
     },
   };
 }

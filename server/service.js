@@ -105,6 +105,11 @@ export function createService({ db, ref, gemini, lookupProvider }) {
   /* ---------- AI ---------- */
   function needAI() { if (!gemini) throw new InputError("AI features are off. Set GEMINI_API_KEY on the server to turn them on.", 503); }
 
+  async function aiStatus() {
+    if (!gemini) return { configured: false, error: "GEMINI_API_KEY is not set on the server." };
+    return gemini.status();
+  }
+
   async function aiExtract({ text, image }) {
     needAI();
     if (!text && !image) throw new InputError("Send booking text or an image.");
@@ -156,8 +161,8 @@ export function createService({ db, ref, gemini, lookupProvider }) {
     const todo = ts.filter(t => !names[t.id + ":" + t.codes.join("")]).slice(0, 40);
     if (!todo.length) return { named: 0 };
     const out = await gemini.nameTrips(todo.map(t => ({ id: t.id, when: t.when, days: t.days, places: t.codes.map(c => { const a = ref.ap.get(c); return `${a?.city || c}, ${countryName(ref, a?.cc)}`; }) })));
-    for (const o of out) {
-      const t = todo.find(x => x.id === o.id);
+    for (const [i, o] of out.entries()) {
+      const t = todo.find(x => x.id === o.id) || (out.length === todo.length ? todo[i] : null);
       if (t && o.name) names[t.id + ":" + t.codes.join("")] = { name: String(o.name).slice(0, 60), summary: String(o.summary || "").slice(0, 160) };
     }
     db.kvPut("tripNames", names);
@@ -175,7 +180,8 @@ export function createService({ db, ref, gemini, lookupProvider }) {
       home: `${s.home} (${ref.ap.get(s.home)?.city || ""})`, today: today(),
       visited: [...s.countries.keys()].map(c => countryName(ref, c)),
       topRoutes: [...s.routes.values()].sort((a, b) => b.n - a.n).slice(0, 8).map(r => r.a.join("-")),
-    })).filter(x => x && x.iata);
+    })).map(x => ({ ...x, iata: x.iata || x.IATA || x.code || x.airport || "" })).filter(x => x && x.city);
+    if (!value.length) throw new InputError("Gemini didn't return any destinations. Try again.", 502);
     db.kvPut("whereNext", { key, value });
     return value;
   }
@@ -190,7 +196,7 @@ export function createService({ db, ref, gemini, lookupProvider }) {
   return {
     all, create, replace, patch, remove, importCSV, query, stats, reviewQueue, trips,
     exportCSV: () => toOpenFlightsCSV(all(), ref, today()),
-    aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup,
+    aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup,
     features: { ai: Boolean(gemini), lookup: Boolean(lookupProvider) },
   };
 }

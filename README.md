@@ -30,6 +30,14 @@ With `GEMINI_API_KEY` set, these switch on. All calls go from the server, so the
 
 `GEMINI_MODEL` (default `gemini-2.5-flash`) handles extraction and trip names; `GEMINI_MODEL_SMART` handles questions, recaps and ideas. Change either if Google renames or retires a model.
 
+If an AI feature shows an error, run this on the server. It checks the key, lists the models your key can use and makes two small test calls:
+
+```bash
+docker exec wander node --disable-warning=ExperimentalWarning server/cli.js ai-check
+```
+
+If a configured model has been retired, Wander switches to the newest available model of the same family (flash or pro) and logs which one it picked (`docker logs wander`).
+
 ### Flight lookup (optional)
 
 With an AeroDataBox key from RapidAPI (free tier: 600 units a month), **Look up** on the Add form fills in route, departure time, duration and registration from a flight number and date.
