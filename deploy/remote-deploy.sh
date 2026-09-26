@@ -47,8 +47,8 @@ NEW_PASSWORD=""
 [ -n "$(getenv WANDER_PASSWORD)" ] || { setenv WANDER_PASSWORD "$(rnd 20)"; NEW_PASSWORD=1; }
 [ -n "$(getenv WANDER_API_TOKEN)" ] || setenv WANDER_API_TOKEN "$(rnd 40)"
 [ -n "$(getenv SESSION_SECRET)" ] || setenv SESSION_SECRET "$(rnd 48)"
-[ -n "$(getenv GEMINI_MODEL)" ] || setenv GEMINI_MODEL gemini-2.5-flash
-[ -n "$(getenv GEMINI_MODEL_SMART)" ] || setenv GEMINI_MODEL_SMART gemini-2.5-pro
+[ -n "$(getenv GEMINI_MODEL)" ] || setenv GEMINI_MODEL gemini-flash-latest
+[ -n "$(getenv GEMINI_MODEL_SMART)" ] || setenv GEMINI_MODEL_SMART gemini-flash-latest
 [ -n "$(getenv COOKIE_SECURE)" ] || setenv COOKIE_SECURE true
 [ -n "$(getenv PUBLIC_READ)" ] || setenv PUBLIC_READ false
 [ -z "${GEMINI_API_KEY:-}" ] || setenv GEMINI_API_KEY "$GEMINI_API_KEY"
