@@ -32,6 +32,7 @@
   <div class="bar-end">
     <button class="btn ghost ai-only" id="askBtn" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l1.8 4.7L16.5 8.5l-4.7 1.8L10 15l-1.8-4.7L3.5 8.5l4.7-1.8z" fill="currentColor"/></svg>Ask</button>
     <button class="btn primary owner-only" id="addBtn" type="button">+ Flight</button>
+    <button class="btn ghost owner-only" id="aiBtn" type="button" title="AI provider, model and API key" aria-label="AI settings"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.6 2h2.8l.4 2.2 1.6.7 1.9-1.3 2 2-1.3 1.9.7 1.6 2.3.4v2.8l-2.3.4-.7 1.6 1.3 1.9-2 2-1.9-1.3-1.6.7-.4 2.3H8.6l-.4-2.3-1.6-.7-1.9 1.3-2-2 1.3-1.9-.7-1.6L1 11.4V8.6l2.3-.4.7-1.6-1.3-1.9 2-2 1.9 1.3 1.6-.7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/></svg><span class="ai-lbl">AI</span></button>
     <button class="btn ghost" id="signBtn" type="button" hidden>Sign out</button>
   </div>
 </header>
@@ -134,7 +135,7 @@
         <datalist id="apList"></datalist><datalist id="acList"></datalist>
       </form>
       <div class="card smart">
-        <div class="card-head"><h2><span class="spark">✦</span> Smart add</h2><p>Paste a booking confirmation or itinerary, or drop a boarding-pass screenshot. Gemini finds every flight; you check them before they're saved.</p></div>
+        <div class="card-head"><h2><span class="spark">✦</span> Smart add</h2><p>Paste a booking confirmation or itinerary, or drop a boarding-pass screenshot. The AI finds every flight; you check them before they're saved.</p></div>
         <textarea id="smartText" rows="7" placeholder="e.g. Booking ABC12D — AI 131 Mumbai to London Heathrow, 14 Nov 2026 13:30, seat 22J"></textarea>
         <label class="drop" id="drop" tabindex="0"><input type="file" id="smartImg" accept="image/*" hidden><span id="dropText">Drop a boarding pass or ticket image, or click to choose</span></label>
         <div class="row"><button class="btn primary" id="smartGo" type="button">Find flights</button><span class="muted" id="smartStatus"></span></div>

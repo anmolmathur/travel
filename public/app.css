@@ -389,3 +389,10 @@ body:not([data-tab="overview"]) .scroll-cue{display:none}
 .form.ground .lookup-only{display:none!important}
 .gm{font-style:normal;font-size:.95em;margin:0 3px}
 .chain .gm{opacity:.95}
+
+/* AI settings */
+.ai-set .fields{margin:14px 0 10px}
+.ai-set .row{margin-top:10px;flex-wrap:wrap;align-items:center}
+.ai-set .hint a{color:var(--sky)}
+.ok-msg{color:var(--ok,#5FD6A8);font-size:13.5px;min-height:1.2em;margin:6px 0 0}
+@media (max-width:640px){.ai-lbl{display:none}}

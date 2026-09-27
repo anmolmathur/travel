@@ -5,12 +5,67 @@ import {
   toOpenFlightsCSV, flightsAsText, todayISO, airlineName, countryName, hm, travellersOf, cleanTravellers, forPerson, slug,
   isAir, modeOf, MODE_INFO,
 } from "../public/lib/core.js";
+import { createAI, PROVIDERS } from "./ai.js";
 
 export class InputError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 
-export function createService({ db, ref, gemini, lookupProvider, defaultPeople = "" }) {
+export function createService({ db, ref, aiEnv = {}, makeAI = createAI, lookupProvider, defaultPeople = "" }) {
   const all = () => db.list().map(f => normalize(f, ref));
   const today = () => todayISO();
+
+  /* ---------- AI provider ---------- */
+  // Settings saved from the app (kv "ai") win over the GEMINI_* environment. A saved provider with no key of its own
+  // borrows the environment key when it's the same provider, so switching models doesn't mean re-entering the key.
+  function aiConfig() {
+    const saved = db.kvGet("ai");
+    if (saved?.provider) {
+      const envKey = saved.provider === (aiEnv.provider || "gemini") ? aiEnv.apiKey : "";
+      return { ...saved, apiKey: saved.apiKey || envKey || "", keyFromEnv: !saved.apiKey && Boolean(envKey), source: "settings" };
+    }
+    return { provider: "gemini", ...aiEnv, keyFromEnv: Boolean(aiEnv.apiKey), source: aiEnv.apiKey ? "env" : "none" };
+  }
+  let aiCache = { key: "", client: null };
+  function ai() {
+    const { provider, apiKey, model, smartModel, baseUrl } = aiConfig();
+    const key = JSON.stringify([provider, apiKey, model, smartModel, baseUrl]);
+    if (aiCache.key !== key) aiCache = { key, client: makeAI({ provider, apiKey, model, smartModel, baseUrl }) };
+    return aiCache.client;
+  }
+  /** What the settings screen shows. The key itself never leaves the server: only whether one is set and its last 4 characters. */
+  function aiSettings() {
+    const c = aiConfig();
+    return {
+      provider: c.provider, model: c.model || "", smartModel: c.smartModel || "", baseUrl: c.baseUrl || "", source: c.source,
+      keySet: Boolean(c.apiKey), keyHint: c.apiKey ? `…${String(c.apiKey).slice(-4)}` : "", keyFromEnv: c.keyFromEnv,
+      envKey: Boolean(aiEnv.apiKey), envProvider: aiEnv.provider || "gemini", providers: PROVIDERS,
+    };
+  }
+  const cleanStr = (v, n = 200) => String(v ?? "").trim().slice(0, n);
+  function setAISettings(input = {}) {
+    if (input.reset) { db.kvPut("ai", null); return aiSettings(); }
+    const provider = cleanStr(input.provider, 20);
+    if (!PROVIDERS[provider]) throw new InputError(`Provider must be one of ${Object.keys(PROVIDERS).join(", ")}.`);
+    const prev = db.kvGet("ai");
+    const baseUrl = PROVIDERS[provider].baseUrl ? cleanStr(input.baseUrl, 300) : "";
+    if (baseUrl && !/^https?:\/\/[^\s]+$/i.test(baseUrl)) throw new InputError("Base URL must start with http:// or https://.");
+    // A blank key keeps the saved one (same provider only); clearKey removes it.
+    const typed = cleanStr(input.apiKey, 400);
+    const apiKey = input.clearKey ? "" : typed || (prev?.provider === provider ? prev.apiKey || "" : "");
+    const next = { provider, apiKey, model: cleanStr(input.model, 120), smartModel: cleanStr(input.smartModel, 120), baseUrl };
+    if (provider === "openai" && !next.model) throw new InputError("Choose a model: load the list with your key, or type one.");
+    db.kvPut("ai", next);
+    return aiSettings();
+  }
+  /** Models the given (or saved) key can use, for the settings screen's pickers. Also proves the key works. */
+  async function aiModels(input = {}) {
+    const provider = cleanStr(input.provider, 20) || aiConfig().provider;
+    if (!PROVIDERS[provider]) throw new InputError("Unknown provider.");
+    const c = aiConfig();
+    const apiKey = cleanStr(input.apiKey, 400) || (c.provider === provider ? c.apiKey : provider === (aiEnv.provider || "gemini") ? aiEnv.apiKey : "");
+    const client = makeAI({ provider, apiKey, baseUrl: cleanStr(input.baseUrl, 300) || (c.provider === provider ? c.baseUrl : ""), model: "probe" });
+    if (!client) throw new InputError("Enter an API key first.");
+    return { provider, models: await client.listModels() };
+  }
 
   /* ---------- people ---------- */
   // "me" is always the owner. Seeded from WANDER_PEOPLE ("me:Anmol,kruti:Kruti") the first time.
@@ -176,15 +231,16 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
   }));
 
   /* ---------- AI ---------- */
-  function needAI() { if (!gemini) throw new InputError("AI features are off. Set GEMINI_API_KEY on the server to turn them on.", 503); }
+  function needAI() { const g = ai(); if (!g) throw new InputError("AI features are off. Add an API key in AI settings (or set GEMINI_API_KEY on the server).", 503); return g; }
 
   async function aiStatus() {
-    if (!gemini) return { configured: false, error: "GEMINI_API_KEY is not set on the server." };
+    const gemini = ai();
+    if (!gemini) return { configured: false, error: "No AI key is set. Add one in AI settings, or set GEMINI_API_KEY on the server." };
     return gemini.status();
   }
 
   async function aiExtract({ text, image }) {
-    needAI();
+    const gemini = needAI();
     if (!text && !image) throw new InputError("Send booking text or an image.");
     let img = null;
     if (image) {
@@ -201,7 +257,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
   }
 
   async function aiAsk(question) {
-    needAI();
+    const gemini = needAI();
     if (!question || !String(question).trim()) throw new InputError("Ask a question.");
     const list = all();
     const names = people().map(p => `${p.id} = ${p.name}`).join(", ");
@@ -209,7 +265,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
   }
 
   async function aiStory(year) {
-    needAI();
+    const gemini = needAI();
     const list = forPerson(all(), "me").filter(f => f.date.startsWith(String(year)) && statusOf(f, today()) !== "cancelled");
     if (!list.length) throw new InputError(`No flights in ${year}.`);
     const sig = createHash("sha1").update(list.map(f => f.id + f.status).sort().join(",")).digest("hex");
@@ -231,7 +287,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
   }
 
   async function aiNameTrips(person = "me") {
-    needAI();
+    const gemini = needAI();
     const { trips: ts } = trips(person);
     const names = db.kvGet("tripNames") || {};
     const todo = ts.filter(t => !names[t.id + ":" + t.codes.join("")]).slice(0, 40);
@@ -246,7 +302,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
   }
 
   async function aiWhereNext() {
-    needAI();
+    const gemini = needAI();
     const flown = forPerson(all(), "me").filter(f => statusOf(f, today()) === "flown");
     const s = computeStats(flown, ref);
     const key = `next:${s.home}:${s.countries.size}:${flown.length}`;
@@ -272,7 +328,7 @@ export function createService({ db, ref, gemini, lookupProvider, defaultPeople =
   return {
     all, create, replace, patch, remove, replaceAirport, people, setPeople, setTravellers, importCSV, query, stats, reviewQueue, trips,
     exportCSV: () => toOpenFlightsCSV(all(), ref, today()),
-    aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup,
-    features: { ai: Boolean(gemini), lookup: Boolean(lookupProvider) },
+    aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup, aiSettings, setAISettings, aiModels,
+    get features() { return { ai: Boolean(ai()), lookup: Boolean(lookupProvider) }; },
   };
 }

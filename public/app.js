@@ -87,6 +87,71 @@ function openPeople() {
   };
 }
 
+/* ---------------- AI settings ---------------- */
+async function openAISettings() {
+  let s;
+  try { s = await api("/api/ai/settings"); } catch (e) { toast(e.message); return; }
+  const P = s.providers;
+  openModal(`<div class="story ai-set"><p class="eyebrow">AI settings</p><h2 id="modalTitle">Model and API key</h2>
+    <p class="muted">Smart add, Ask, trip names, year in review and Where next use this. Bring your own key from any provider below; it's stored on this server and never sent to the browser.</p>
+    <div class="fields">
+      <div class="field wide"><label for="aiProv">Provider</label><select id="aiProv">${Object.entries(P).map(([k, p]) => `<option value="${k}"${k === s.provider ? " selected" : ""}>${esc(p.label)}</option>`).join("")}</select></div>
+      <div class="field wide"><label for="aiKey">API key</label><input id="aiKey" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="aiKeyHint"></span></div>
+      <div class="field wide" id="aiBaseRow"><label for="aiBase">Base URL (optional)</label><input id="aiBase" placeholder="https://api.openai.com/v1" value="${esc(s.baseUrl)}" spellcheck="false"><span class="hint">For OpenRouter, Groq, a local Ollama (http://host:11434/v1) or any other OpenAI-compatible server.</span></div>
+      <div class="field"><label for="aiModel">Model</label><input id="aiModel" list="aiModels" value="${esc(s.model)}" spellcheck="false"><span class="hint">Smart add and trip names</span></div>
+      <div class="field"><label for="aiSmart">Model for questions</label><input id="aiSmart" list="aiModels" value="${esc(s.smartModel)}" spellcheck="false"><span class="hint">Ask, year in review, Where next. Blank: same as Model.</span></div>
+    </div>
+    <datalist id="aiModels"></datalist>
+    <div class="row"><button class="btn" type="button" id="aiLoad">Load models</button><span class="muted" id="aiListNote"></span></div>
+    <p class="err" id="aiErr" role="alert"></p><p class="ok-msg" id="aiOk" role="status"></p>
+    <div class="row"><button class="btn primary" type="button" id="aiSave">Save</button><button class="btn" type="button" id="aiTest">Test</button>
+      ${s.source === "settings" && s.envKey ? '<button class="btn ghost" type="button" id="aiReset">Use the server’s .env settings</button>' : ""}</div></div>`);
+  const prov = () => $("#aiProv").value;
+  const sync = () => {
+    const k = prov(), p = P[k], same = k === s.provider;
+    $("#aiBaseRow").hidden = !p.baseUrl;
+    $("#aiKey").placeholder = same && s.keySet ? `Saved (${s.keyHint}). Leave blank to keep it.` : k === s.envProvider && s.envKey ? "Blank: use the server’s GEMINI_API_KEY" : p.keyHint;
+    $("#aiKeyHint").innerHTML = `${same && s.keyFromEnv ? "Using the key from the server’s .env. " : ""}<a href="${esc(p.keyUrl)}" target="_blank" rel="noopener">Get a key from ${esc(p.label)}</a>`;
+    if (!same) { $("#aiModel").value = p.defaultModel || ""; $("#aiSmart").value = ""; }
+    $("#aiModel").placeholder = p.defaultModel || "Load models, or type one";
+    $("#aiModels").innerHTML = ""; $("#aiListNote").textContent = "";
+  };
+  $("#aiProv").onchange = sync; sync();
+  const vals = () => ({ provider: prov(), apiKey: $("#aiKey").value.trim(), baseUrl: $("#aiBase").value.trim(), model: $("#aiModel").value.trim(), smartModel: $("#aiSmart").value.trim() });
+  const note = (ok, msg) => { $("#aiErr").textContent = ok ? "" : msg; $("#aiOk").textContent = ok ? msg : ""; };
+  const busy = (b, on, label) => { b.disabled = on; if (label) b.textContent = label; };
+  $("#aiLoad").onclick = async e => {
+    busy(e.target, true, "Loading…");
+    try {
+      const { models } = await api("/api/ai/models", { method: "POST", body: JSON.stringify(vals()) });
+      $("#aiModels").innerHTML = models.map(m => `<option value="${esc(m)}">`).join("");
+      $("#aiListNote").textContent = `${models.length} models available with this key. Pick one in the Model fields.`;
+      note(true, "The key works.");
+    } catch (err) { note(false, err.message); }
+    busy(e.target, false, "Load models");
+  };
+  const save = async () => { s = await api("/api/ai/settings", { method: "PUT", body: JSON.stringify(vals()) }); $("#aiKey").value = ""; sync(); await refreshFeatures(); };
+  $("#aiSave").onclick = async e => {
+    busy(e.target, true);
+    try { await save(); note(true, `Saved: ${P[s.provider].label}, ${s.model || "default model"}.`); toast("AI settings saved"); }
+    catch (err) { note(false, err.message); }
+    busy(e.target, false);
+  };
+  $("#aiTest").onclick = async e => {
+    busy(e.target, true, "Testing…"); note(true, "");
+    try {
+      await save();
+      const r = await api("/api/ai/status");
+      if (r.error) note(false, r.error); else note(true, `Working. ${r.model}: ${r.fast}; ${r.smartModel}: ${r.smart}.`);
+    } catch (err) { note(false, err.message); }
+    busy(e.target, false, "Test");
+  };
+  const rs = $("#aiReset"); if (rs) rs.onclick = async () => { try { s = await api("/api/ai/settings", { method: "PUT", body: JSON.stringify({ reset: true }) }); await refreshFeatures(); $("#modal").hidden = true; toast("Back to the server’s .env settings"); } catch (err) { note(false, err.message); } };
+}
+async function refreshFeatures() {
+  try { me = await api("/api/me"); document.body.classList.toggle("ai", !!me.features?.ai); } catch { /* keep the old flags */ }
+}
+
 function visible(ignoreYear = false) {
   return flights.filter(f => inView(f) && (ignoreYear || ui.year === "all" || f.date.startsWith(ui.year)) && (ui.airline === "all" || f.airline === ui.airline) && (ui.showCancelled || statusOf(f) !== "cancelled"));
 }
@@ -278,7 +343,7 @@ function renderOverview() {
     ${als.map(([c, n]) => `<div class="al">${logo(c)}<div><b>${esc(airlineName(REF, c))}</b><small>${DEFUNCT[c] ? `<span class="tag gone" title="${esc(DEFUNCT[c])}">${/Merged/.test(DEFUNCT[c]) ? "merged" : "defunct"} ${DEFUNCT[c].slice(-4)}</span>` : `${Math.round(n / s.n * 100)}% of flights`}</small></div><span class="n">${n}</span></div>`).join("")}
   </div></div>
 
-  <div class="sec ai-only"><div class="sec-head"><h2>Where next <em>· ideas from Gemini</em></h2><p>Places you haven't been, reachable from ${esc(s.home)}.</p><button class="btn" type="button" id="nextBtn">Suggest destinations</button></div><div id="ideas"></div></div>
+  <div class="sec ai-only"><div class="sec-head"><h2>Where next <em>· ideas from AI</em></h2><p>Places you haven't been, reachable from ${esc(s.home)}.</p><button class="btn" type="button" id="nextBtn">Suggest destinations</button></div><div id="ideas"></div></div>
 
   <div class="sec"><div class="sec-head"><h2>The numbers</h2><p>The same figures OpenFlights shows, and a few more.</p></div><div class="grid">
     <div class="card"><h3>Unique</h3><dl class="kv"><dt>Airports</dt><dd>${s.airports.size}</dd><dt>Airlines</dt><dd>${s.carriers.size}</dd><dt>Countries</dt><dd>${s.countries.size}</dd><dt>Aircraft types</dt><dd>${s.planes.size}</dd><dt>Routes</dt><dd>${s.routes.size}</dd></dl></div>
@@ -328,7 +393,7 @@ function renderTrips() {
   const nAb = base.filter(t => t.international).length;
   el.innerHTML = `<div class="sec-head"><h2>Trips <em>· ${ts.length}</em></h2><p>Flights stitched into journeys: each trip leaves ${esc(tripData.home || "home")} and ends when you land back.</p>
     <div class="seg" role="group" aria-label="Trip type">${[["abroad", `Abroad ${nAb}`], ["domestic", `Domestic ${base.length - nAb}`], ["all", "All"]].map(([k, l]) => `<button type="button" data-kind="${k}" aria-pressed="${ui.tripKind === k}">${l}</button>`).join("")}</div>
-    ${me.features?.ai && me.canWrite && unnamed ? `<button class="btn" id="nameBtn" type="button"><span class="spark">✦</span> Name ${unnamed > 40 ? "40" : unnamed} trips with Gemini</button>` : ""}</div>
+    ${me.features?.ai && me.canWrite && unnamed ? `<button class="btn" id="nameBtn" type="button"><span class="spark">✦</span> Name ${unnamed > 40 ? "40" : unnamed} trips with AI</button>` : ""}</div>
   <div class="tl">${[...byYear].map(([y, list]) => {
     const km = list.reduce((a, t) => a + t.km, 0), abroad = list.filter(t => t.international).length;
     return `<div class="tl-year"><h3>${y}</h3><span class="meta">${list.length} trip${list.length > 1 ? "s" : ""} · ${abroad} abroad · ${fmt(km)} km</span>${me.features?.ai ? `<button class="btn small" type="button" data-story="${y}"><span class="spark">✦</span> ${y} in review</button>` : ""}</div>` +
@@ -366,7 +431,7 @@ function selectTrip(id) {
   $(".hero").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 async function story(year) {
-  openModal(`<div class="story"><p class="eyebrow">${year} in review</p><h2>Writing your year…</h2><p class="muted">Gemini is reading ${flights.filter(f => f.date.startsWith(year) && statusOf(f) !== "cancelled").length} flights.</p></div>`);
+  openModal(`<div class="story"><p class="eyebrow">${year} in review</p><h2>Writing your year…</h2><p class="muted">The AI is reading ${flights.filter(f => f.date.startsWith(year) && statusOf(f) !== "cancelled").length} flights.</p></div>`);
   try {
     const s = await api("/api/ai/story", { method: "POST", body: JSON.stringify({ year }) });
     openModal(`<div class="story"><p class="eyebrow"><span class="spark">✦</span> ${year} in review</p><h2>${esc(s.title)}</h2><p>${esc(s.story)}</p><ul>${(s.highlights || []).map(h => `<li>${esc(h)}</li>`).join("")}</ul></div>`);
@@ -684,6 +749,7 @@ function wire() {
   const setBar = () => document.documentElement.style.setProperty("--bar-h", $(".bar").offsetHeight + "px");
   new ResizeObserver(setBar).observe($(".bar")); setBar();
   $("#addBtn").onclick = () => { resetForm(); go("add"); $("#iFlight").focus(); };
+  $("#aiBtn").onclick = openAISettings;
   $("#askBtn").onclick = openAsk; $("#drawerClose").onclick = () => ($("#drawer").hidden = true);
   $("#askForm").addEventListener("submit", e => { e.preventDefault(); ask($("#askInput").value); });
   $("#suggest").onclick = e => { const b = e.target.closest("button"); if (b) ask(b.textContent); };
