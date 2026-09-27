@@ -22,11 +22,17 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 **Logbook.** Searchable, sortable table with edit, not-flown and delete. OpenFlights CSV import and export; Wander's export adds `Travellers` and `Mode` columns, and puts a ground leg's operator in `Airline`.
 
-### Gemini features
+### AI features
 
-With `GEMINI_API_KEY` set, these switch on. All calls go from the server, so the key never reaches the browser.
+Bring your own key: open **AI settings** (the ⚙ AI button, owner only) and pick a provider, paste its API key, press **Load models** to choose from the models that key can use, and **Test**. Supported:
 
-- **Smart add**: paste a confirmation email or itinerary, or drop a boarding-pass or e-ticket screenshot; Gemini returns every segment for you to check before saving.
+- **Google Gemini** (free tier available): key from https://aistudio.google.com/apikey.
+- **OpenAI**, or any OpenAI-compatible server (OpenRouter, Groq, a local Ollama) by setting its base URL.
+- **Anthropic Claude**: key from https://console.anthropic.com/settings/keys.
+
+"Model" handles Smart add and trip names; "Model for questions" handles Ask, year in review and Where next. The key is stored in the server's database (the `wander-data` volume) and never sent to the browser: the settings screen only shows its last four characters. Only the signed-in owner can see or change these settings; the API token used by agents can't. Alternatively, set `GEMINI_API_KEY` in `.env`; saved settings win over it, and **Use the server's .env settings** goes back to it. With a key from either place, these switch on. All calls go from the server.
+
+- **Smart add**: paste a confirmation email or itinerary, or drop a boarding-pass or e-ticket screenshot; the AI returns every segment for you to check before saving.
 - **Ask your logbook**: questions in plain English ("How many times have I flown to Delhi?", "Which airline did I fly most in 2023?").
 - **Year in review**: a short written recap with highlights for any year (cached until that year's flights change).
 - **Trip names**: evocative names and one-line summaries for trips.
