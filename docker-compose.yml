@@ -4,6 +4,9 @@ services:
     build: .
     container_name: wander
     restart: unless-stopped
+    # Watchtower (if the host runs one with WATCHTOWER_LABEL_ENABLE) pulls new images of this container on its schedule.
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     env_file: .env
     volumes:
       - wander-data:/data

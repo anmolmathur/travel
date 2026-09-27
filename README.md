@@ -91,7 +91,8 @@ Then run **Actions → Deploy → Run workflow**, or push to `main`. `deploy/rem
 5. **Publish it.** Point your reverse proxy at `127.0.0.1:3040` using the matching file in `deploy/` (Caddy, nginx or Traefik). With Cloudflare Tunnel, add a public hostname `wander.anmolmathur.com → http://localhost:3040`.
 6. **Load your history.** Sign in and use Logbook → Import CSV, or on the server:
    `docker compose exec wander node server/cli.js import /data/openflights.csv` (copy the file into the volume first with `docker cp`).
-7. **Automatic deploys (optional).** Add repository secrets `HETZNER_HOST`, `HETZNER_USER` and `HETZNER_SSH_KEY` (and `HETZNER_PORT` if not 22). Every push to `main` then runs the tests, builds a multi-arch image and restarts the container on the server.
+7. **Automatic updates with Watchtower (optional).** The container carries the label `com.centurylinklabs.watchtower.enable=true`. If the server already runs [Watchtower](https://containrrr.dev/watchtower/) with `WATCHTOWER_LABEL_ENABLE=true`, it pulls each new image on its own schedule (for example nightly) and recreates the container, keeping its volume and networks. The image must be pullable without logging in (make the `travel` package public on GitHub), or Watchtower needs the registry login mounted.
+8. **Automatic deploys on every push (optional).** Add repository secrets `HETZNER_HOST`, `HETZNER_USER` and `HETZNER_SSH_KEY` (and `HETZNER_PORT` if not 22). Every push to `main` then runs the tests, builds a multi-arch image and restarts the container on the server.
 
 Back up the database with `docker compose exec wander node server/cli.js export > wander-backup.csv`, or copy `/data/wander.db` from the `wander-data` volume.
 
