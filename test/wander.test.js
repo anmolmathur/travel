@@ -195,3 +195,16 @@ test("a busy Gemini model is retried, then another Flash model answers", async (
   const allBusy = createGemini({ apiKey: "k", model: "gemini-3.8-flash", fetchImpl: async url => url.includes("/models?") ? { ok: true, json: async () => ({ models: [] }) } : busy });
   await assert.rejects(allBusy.ask({ question: "q", table: "", summary: "", today: "2026-09-26" }), e => e.status === 503 && /overloaded/.test(e.message));
 });
+
+test("the app's own files are revalidated on every load, with a 304 when unchanged", async () => {
+  await withServer({}, async base => {
+    const r = await fetch(`${base}/app.js`, { headers: { "accept-encoding": "gzip" } });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("cache-control"), "no-cache");
+    const etag = r.headers.get("etag"); assert.ok(etag);
+    await r.arrayBuffer();
+    const again = await fetch(`${base}/app.js`, { headers: { "accept-encoding": "gzip", "if-none-match": etag } });
+    assert.equal(again.status, 304);
+    assert.match((await fetch(`${base}/vendor/d3.min.js`)).headers.get("cache-control"), /max-age/);
+  });
+});

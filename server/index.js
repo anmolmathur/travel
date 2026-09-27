@@ -50,13 +50,18 @@ export function buildApp(env = process.env) {
     if (p === "/" || !extname(p)) p = "/index.html";
     const file = normPath(join(PUBLIC, p));
     if (!file.startsWith(PUBLIC) || !existsSync(file) || !statSync(file).isFile()) return send(res, 404, "Not found");
-    const ext = extname(file);
+    const ext = extname(file), st = statSync(file);
+    const gz = /\bgzip\b/.test(req.headers["accept-encoding"] || "") && [".js", ".css", ".json", ".html", ".svg"].includes(ext);
+    // The app's own files are revalidated on every load (a cheap 304 when unchanged), so a deploy never leaves the
+    // browser or a CDN running old JavaScript against a new page. Only the pinned third-party libraries are cached.
+    const etag = `W/"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}${gz ? "-gz" : ""}"`;
     const headers = {
       "content-type": TYPES[ext] || "application/octet-stream",
-      "cache-control": ext === ".html" ? "no-cache" : p.startsWith("/vendor/") || p.startsWith("/data/") ? "public, max-age=604800" : "public, max-age=300",
+      "cache-control": p.startsWith("/vendor/") ? "public, max-age=604800" : "no-cache",
+      etag, vary: "accept-encoding",
       "content-security-policy": CSP, "x-content-type-options": "nosniff", "referrer-policy": "strict-origin-when-cross-origin",
     };
-    const gz = /\bgzip\b/.test(req.headers["accept-encoding"] || "") && [".js", ".css", ".json", ".html", ".svg"].includes(ext);
+    if ((req.headers["if-none-match"] || "").split(/,\s*/).includes(etag)) { res.writeHead(304, headers); return res.end(); }
     if (gz) headers["content-encoding"] = "gzip";
     res.writeHead(200, headers);
     const stream = createReadStream(file);
