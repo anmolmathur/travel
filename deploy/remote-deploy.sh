@@ -28,6 +28,8 @@ services:
     image: ${IMAGE}
     container_name: wander
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     env_file: .env
     volumes:
       - wander-data:/data
@@ -36,6 +38,13 @@ services:
 volumes:
   wander-data:
 YML
+fi
+
+# Older installs: opt the container in to Watchtower's label-scoped updates, as the rest of the stack is.
+if ! grep -q "watchtower.enable" docker-compose.yml; then
+  say "Adding the Watchtower label to docker-compose.yml"
+  cp docker-compose.yml "docker-compose.yml.bak-$(date +%Y%m%d-%H%M%S)"
+  sed -i '/container_name: wander/a\    labels:\n      - "com.centurylinklabs.watchtower.enable=true"' docker-compose.yml
 fi
 
 # .env: create secrets once, never overwrite them; refresh API keys when the workflow supplies them.

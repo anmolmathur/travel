@@ -13,6 +13,8 @@ services:
     image: ghcr.io/anmolmathur/travel:latest
     container_name: wander
     restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     env_file: .env
     volumes:
       - wander-data:/data
