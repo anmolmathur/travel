@@ -7,10 +7,11 @@ import {
 } from "../public/lib/core.js";
 import { cleanPnr, cleanRail } from "../public/lib/rail.js";
 import { createAI, PROVIDERS } from "./ai.js";
+import { createSearch } from "./search.js";
 
 export class InputError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
 
-export function createService({ db, ref, aiEnv = {}, makeAI = createAI, lookupProvider, defaultPeople = "" }) {
+export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEnv = "", makeSearch = createSearch, lookupProvider, defaultPeople = "" }) {
   const all = () => db.list().map(f => normalize(f, ref));
   const today = () => todayISO();
 
@@ -57,6 +58,32 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, lookupPr
     db.kvPut("ai", next);
     return aiSettings();
   }
+  /* ---------- web search (SearXNG) ---------- */
+  // A URL saved from AI settings wins over SEARXNG_URL. Empty means off: the app's links then open Google instead.
+  const searchUrl = () => { const s = db.kvGet("search"); return s && typeof s.url === "string" ? s.url : searchEnv || ""; };
+  let searchCache = { url: null, client: null };
+  function search() { const url = searchUrl(); if (searchCache.url !== url) searchCache = { url, client: makeSearch({ url }) }; return searchCache.client; }
+  function searchSettings() { const s = db.kvGet("search"); return { url: searchUrl(), source: s && typeof s.url === "string" ? "settings" : searchEnv ? "env" : "none", envUrl: Boolean(searchEnv) }; }
+  function setSearchSettings(input = {}) {
+    if (input.reset) { db.kvPut("search", null); return searchSettings(); }
+    const url = cleanStr(input.url, 300).replace(/\/+$/, "");
+    if (url && !/^https?:\/\/\S+$/i.test(url)) throw new InputError("The SearXNG address must start with http:// or https://, e.g. http://searxng:8080.");
+    db.kvPut("search", { url });
+    return searchSettings();
+  }
+  async function webSearch(q, url) {
+    const s = url ? makeSearch({ url: cleanStr(url, 300) }) : search();
+    if (!s) throw new InputError("Web search is off. Add your SearXNG address in AI settings.", 503);
+    return s.search(q);
+  }
+  /** The AI reads the search snippets (only those) and answers in a sentence or two, naming its sources. */
+  async function aiDigest({ question, results } = {}) {
+    const gemini = needAI();
+    const q = cleanStr(question, 200), rs = (Array.isArray(results) ? results : []).slice(0, 8).map(r => ({ site: cleanStr(r?.site, 80), title: cleanStr(r?.title, 200), snippet: cleanStr(r?.snippet, 400), published: cleanStr(r?.published, 25) }));
+    if (!q || !rs.length) throw new InputError("Nothing to summarise.");
+    return { answer: await gemini.digest({ question: q, results: rs, now: new Date().toISOString() }) };
+  }
+
   /** Models the given (or saved) key can use, for the settings screen's pickers. Also proves the key works. */
   async function aiModels(input = {}) {
     const provider = cleanStr(input.provider, 20) || aiConfig().provider;
@@ -336,6 +363,7 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, lookupPr
     all, create, replace, patch, remove, replaceAirport, people, setPeople, setTravellers, importCSV, query, stats, reviewQueue, trips,
     exportCSV: () => toOpenFlightsCSV(all(), ref, today()),
     aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup, aiSettings, setAISettings, aiModels,
-    get features() { return { ai: Boolean(ai()), lookup: Boolean(lookupProvider) }; },
+    searchSettings, setSearchSettings, webSearch, aiDigest,
+    get features() { return { ai: Boolean(ai()), lookup: Boolean(lookupProvider), search: Boolean(search()) }; },
   };
 }

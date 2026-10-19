@@ -455,3 +455,18 @@ body[data-tab="journeys"] .hero{display:none}
 .ptr.busy .ptr-spin{animation:ptrspin .7s linear infinite}
 @keyframes ptrspin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion: reduce){.ptr.busy .ptr-spin{animation:none}}
+
+/* in-app web search */
+.search .small{font-size:12.5px;margin-top:-4px}
+.sres{list-style:none;margin:12px 0 4px;padding:0;display:flex;flex-direction:column;gap:12px;max-height:min(55vh,520px);overflow:auto}
+.sres li{border-left:2px solid var(--line-2);padding-left:10px}
+.story .sres li::before{content:none}
+.sres a{color:var(--ink);text-decoration:none}.sres a:hover b{text-decoration:underline}
+.sres b{font-weight:600;font-size:14.5px}
+.sres small{display:block;color:var(--good);font-size:12px;margin-top:2px}
+.sres p{margin:4px 0 0;font-size:13.5px;color:var(--ink-2);line-height:1.45}
+.sanswer,.digest{background:var(--surface-2);border:1px solid var(--line-2);border-radius:12px;padding:10px 12px;margin:10px 0}
+.digest{border-color:var(--violet,#A18CFF)}
+.digest p,.sanswer p{margin:0;font-size:14.5px;line-height:1.5}
+.digest small{display:block;margin-top:6px;color:var(--ink-3);font-size:12px}
+.sep{border:0;border-top:1px solid var(--line-2);margin:22px 0 14px}

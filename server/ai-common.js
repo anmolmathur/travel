@@ -73,6 +73,16 @@ ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
       return asArray(await generate({ parts, temperature: 0.1 }));
     },
 
+    /** A short answer from web-search snippets (e.g. a train's running status), with sources. */
+    async digest({ question, results, now }) {
+      const text = await generate({
+        json: false, temperature: 0.1,
+        system: "You read web search result snippets for a traveller and answer their question in one to three short sentences. Use only what the snippets say; never guess. Name the site(s) you relied on in brackets. If the snippets show a time, say how old the information is. If the snippets don't answer the question, say so plainly and suggest opening the most relevant result.",
+        parts: [{ text: `Now: ${now}\nQUESTION: ${question}\n\nSEARCH RESULTS:\n${results.map((r, i) => `${i + 1}. [${r.site}] ${r.title}${r.published ? ` (${r.published})` : ""}\n${r.snippet}`).join("\n")}` }],
+      });
+      return String(text).trim();
+    },
+
     /** Answer a free-form question about the logbook. */
     async ask({ question, table, summary, today }) {
       const text = await generate({
