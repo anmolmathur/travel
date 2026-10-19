@@ -136,7 +136,8 @@ function openPeople() {
 /* ---------------- AI settings ---------------- */
 async function openAISettings() {
   let s;
-  try { s = await api("/api/ai/settings"); } catch (e) { toast(e.message); return; }
+  let ws = { url: "" };
+  try { [s, ws] = await Promise.all([api("/api/ai/settings"), api("/api/search/settings").catch(() => ({ url: "" }))]); } catch (e) { toast(e.message); return; }
   const P = s.providers;
   openModal(`<div class="story ai-set"><p class="eyebrow">AI settings</p><h2 id="modalTitle">Model and API key</h2>
     <p class="muted">Smart add, Ask, trip names, year in review and Where next use this. Bring your own key from any provider below; it's stored on this server and never sent to the browser.</p>
@@ -151,7 +152,12 @@ async function openAISettings() {
     <div class="row"><button class="btn" type="button" id="aiLoad">Load models</button><span class="muted" id="aiListNote"></span></div>
     <p class="err" id="aiErr" role="alert"></p><p class="ok-msg" id="aiOk" role="status"></p>
     <div class="row"><button class="btn primary" type="button" id="aiSave">Save</button><button class="btn" type="button" id="aiTest">Test</button>
-      ${s.source === "settings" && s.envKey ? '<button class="btn ghost" type="button" id="aiReset">Use the server’s .env settings</button>' : ""}</div></div>`);
+      ${s.source === "settings" && s.envKey ? '<button class="btn ghost" type="button" id="aiReset">Use the server’s .env settings</button>' : ""}</div>
+    <hr class="sep"><p class="eyebrow">Web search</p><h3>SearXNG</h3>
+    <p class="muted">With your own SearXNG, links like Live running status, Coach position and Flight status show their results inside Wander instead of opening Google. On the same Docker network it's usually <span class="mono">http://searxng:8080</span>.</p>
+    <div class="fields"><div class="field wide"><label for="srUrl">SearXNG address</label><input id="srUrl" value="${esc(ws.url || "")}" placeholder="http://searxng:8080" spellcheck="false"></div></div>
+    <p class="err" id="srErr" role="alert"></p><p class="ok-msg" id="srOk" role="status"></p>
+    <div class="row"><button class="btn primary" type="button" id="srSave">Save</button><button class="btn" type="button" id="srTest">Test</button></div></div>`);
   const prov = () => $("#aiProv").value;
   const sync = () => {
     const k = prov(), p = P[k], same = k === s.provider;
@@ -191,6 +197,19 @@ async function openAISettings() {
       if (r.error) note(false, r.error); else note(true, `Working. ${r.model}: ${r.fast}; ${r.smartModel}: ${r.smart}.`);
     } catch (err) { note(false, err.message); }
     busy(e.target, false, "Test");
+  };
+  const srNote = (ok, msg) => { $("#srErr").textContent = ok ? "" : msg; $("#srOk").textContent = ok ? msg : ""; };
+  $("#srTest").onclick = async e => {
+    busy(e.target, true, "Testing…");
+    try { const r = await api("/api/search/test", { method: "POST", body: JSON.stringify({ url: $("#srUrl").value.trim() }) }); srNote(true, `Working: ${r.results.length} results for "${r.query}".`); }
+    catch (err) { srNote(false, err.message); }
+    busy(e.target, false, "Test");
+  };
+  $("#srSave").onclick = async e => {
+    busy(e.target, true);
+    try { ws = await api("/api/search/settings", { method: "PUT", body: JSON.stringify({ url: $("#srUrl").value.trim() }) }); await refreshFeatures(); srNote(true, ws.url ? "Saved. Search links now open inside Wander." : "Saved. Search is off; links open Google."); }
+    catch (err) { srNote(false, err.message); }
+    busy(e.target, false);
   };
   const rs = $("#aiReset"); if (rs) rs.onclick = async () => { try { s = await api("/api/ai/settings", { method: "PUT", body: JSON.stringify({ reset: true }) }); await refreshFeatures(); $("#modal").hidden = true; toast("Back to the server’s .env settings"); } catch (err) { note(false, err.message); } };
 }
@@ -457,7 +476,9 @@ function renderJourneys() {
     const kind = statusKind(r.status);
     const pax = (r.passengers || []).map((p, i) => `<div class="jp">${avatar(p.who || whoOf(f)[i] || "me", true)}<span>${esc(pName(p.who || whoOf(f)[i] || "me"))}</span>
       <b class="berth">${esc([p.coach, p.berth].filter(Boolean).join(" · ") || "—")}</b><small>${esc(BERTH_TYPES[p.berthType] || "")}</small>${p.status ? `<span class="chip ${statusKind(p.status)}">${esc(p.status)}</span>` : ""}</div>`).join("");
-    const links = legLinks({ ...f, mode }).map(l => `<a class="btn small${l.official ? "" : " ghost"}" href="${esc(l.href)}" ${/^https?:/.test(l.href) ? 'target="_blank" rel="noopener"' : ""} title="${esc(l.note || (l.official ? "Official Indian Railways site" : ""))}"${l.copy ? ` data-copy="${esc(l.copy)}"` : ""}>${esc(l.label)}</a>`).join("");
+    const links = legLinks({ ...f, mode }).map(l => l.q && me.features?.search
+      ? `<button class="btn small ghost" type="button" data-search="${esc(l.q)}" data-label="${esc(l.label)}">🔎 ${esc(l.label)}</button>`
+      : `<a class="btn small${l.official ? "" : " ghost"}" href="${esc(l.href)}" ${/^https?:/.test(l.href) ? 'target="_blank" rel="noopener"' : ""} title="${esc(l.note || (l.official ? "Official Indian Railways site" : ""))}"${l.copy ? ` data-copy="${esc(l.copy)}"` : ""}>${esc(l.label)}</a>`).join("");
     return `<article class="jcard${nextJourney() === f ? " next" : ""}" data-id="${esc(f.id)}">
       <div class="jtop"><span class="jmode">${head}</span><span class="jwhen">${untilText(f)}</span></div>
       ${r.trainName ? `<h3>${esc(r.trainName)}</h3>` : ""}
@@ -480,8 +501,32 @@ function renderJourneys() {
     const card = e.target.closest(".jcard"), f = card && flights.find(x => x.id === card.dataset.id); if (!f) return;
     if (e.target.closest("[data-edit]")) { loadForm(f); go("add"); }
     if (e.target.closest("[data-upd]")) openRailUpdate(f);
+    const sb = e.target.closest("[data-search]");
+    if (sb) openSearch(sb.dataset.search, `${sb.dataset.label} · ${legName(f)}`);
   };
 }
+/** Web search through the server's SearXNG, shown in place; the AI can boil the snippets down to an answer. */
+async function openSearch(q, title) {
+  const google = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+  openModal(`<div class="story search"><p class="eyebrow">Web search</p><h2 id="modalTitle">${esc(title)}</h2><p class="muted mono small">${esc(q)}</p>
+    <div class="digest" id="sAns" hidden></div><div id="sRes"><p class="muted">Searching…</p></div>
+    <div class="row">${me.features?.ai ? '<button class="btn" type="button" id="sAi" disabled><span class="spark">✦</span> Summarise with AI</button>' : ""}<a class="btn ghost" href="${esc(google)}" target="_blank" rel="noopener">Search on Google</a></div></div>`);
+  let found;
+  try { found = await api(`/api/search?q=${encodeURIComponent(q)}`); }
+  catch (e) { if ($("#sRes")) $("#sRes").innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const box = $("#sRes"); if (!box) return; // closed meanwhile
+  box.innerHTML = (found.answers.length ? `<div class="sanswer">${found.answers.map(a => `<p>${esc(a)}</p>`).join("")}</div>` : "") +
+    (found.results.length ? `<ol class="sres">${found.results.map(r => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.title)}</b></a><small>${esc(r.site)}${r.published ? ` · ${esc(r.published.slice(0, 10))}` : ""}</small>${r.snippet ? `<p>${esc(r.snippet)}</p>` : ""}</li>`).join("")}</ol>` : '<p class="muted">No results. Try Google below.</p>');
+  const ai = $("#sAi"); if (!ai || !found.results.length) return;
+  ai.disabled = false;
+  ai.onclick = async () => {
+    ai.disabled = true; ai.textContent = "Reading the results…";
+    const out = $("#sAns");
+    try { const { answer } = await api("/api/ai/digest", { method: "POST", body: JSON.stringify({ question: title, results: found.results }) }); out.hidden = false; out.innerHTML = `<p>${esc(answer)}</p><small>From the search snippets below, which can be out of date. Open a result to check.</small>`; ai.remove(); }
+    catch (e) { out.hidden = false; out.innerHTML = `<p class="err">${esc(e.message)}</p>`; ai.disabled = false; ai.innerHTML = '<span class="spark">✦</span> Try again'; }
+  };
+}
+
 /** Quick update while travelling: booking status, chart, platform and each person's coach and berth. */
 function openRailUpdate(f) {
   const r = f.rail || {}, who = whoOf(f);

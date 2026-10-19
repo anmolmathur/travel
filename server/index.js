@@ -23,7 +23,7 @@ export function buildApp(env = process.env) {
   const db = openDb(env.WANDER_DB || join(ROOT, "data", "wander.db"));
   const aiEnv = { provider: "gemini", apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL || "gemini-flash-latest", smartModel: env.GEMINI_MODEL_SMART || env.GEMINI_MODEL || "gemini-flash-latest" };
   const lookupProvider = createAeroDataBox({ apiKey: env.AERODATABOX_API_KEY });
-  const service = createService({ db, ref, aiEnv, lookupProvider, defaultPeople: env.WANDER_PEOPLE || "" });
+  const service = createService({ db, ref, aiEnv, searchEnv: env.SEARXNG_URL || "", lookupProvider, defaultPeople: env.WANDER_PEOPLE || "" });
   const auth = createAuth({
     password: env.WANDER_PASSWORD, apiToken: env.WANDER_API_TOKEN, secret: env.SESSION_SECRET,
     publicRead: env.PUBLIC_READ === "true", secureCookie: env.COOKIE_SECURE !== "false",
@@ -110,6 +110,11 @@ export function buildApp(env = process.env) {
     if (path === "/api/ai/settings" && method === "GET") { needOwner(); return send(res, 200, service.aiSettings()); }
     if (path === "/api/ai/settings" && method === "PUT") { needOwner(); return send(res, 200, service.setAISettings(await readJSON(req, 8192))); }
     if (path === "/api/ai/models" && method === "POST") { needOwner(); return send(res, 200, await service.aiModels(await readJSON(req, 8192))); }
+    if (path === "/api/search/settings" && method === "GET") { needOwner(); return send(res, 200, service.searchSettings()); }
+    if (path === "/api/search/settings" && method === "PUT") { needOwner(); return send(res, 200, service.setSearchSettings(await readJSON(req, 4096))); }
+    if (path === "/api/search" && method === "GET") { needWrite(); return send(res, 200, await service.webSearch(url.searchParams.get("q"))); }
+    if (path === "/api/search/test" && method === "POST") { needOwner(); const b = await readJSON(req, 4096); return send(res, 200, await service.webSearch("indian railways", b.url)); }
+    if (path === "/api/ai/digest" && method === "POST") { needWrite(); return send(res, 200, await service.aiDigest(await readJSON(req, 64 * 1024))); }
     if (path === "/api/ai/status") { if (who !== "owner" && who !== "agent") throw new InputError("Sign in first.", 401); return send(res, 200, await service.aiStatus()); }
     if (path === "/api/ai/extract" && method === "POST") { needWrite(); return send(res, 200, { flights: await service.aiExtract(await readJSON(req, 12 * 1024 * 1024)) }); }
     if (path === "/api/ai/ask" && method === "POST") { needRead(); if (who === "public") throw new InputError("Sign in to ask questions.", 401); return send(res, 200, { answer: await service.aiAsk((await readJSON(req)).question) }); }
