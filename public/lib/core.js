@@ -1,4 +1,5 @@
 // Shared flight logic. Pure functions, imported by both the browser app and the server.
+import { cleanPnr, cleanRail } from "./rail.js";
 
 export const DEFUNCT = {
   "9W": "Ceased operations, Apr 2019",
@@ -144,7 +145,8 @@ export function toDoc(f, ref, extra = {}, today = todayISO()) {
     distanceKm: km, duration, seat: String(f.seat || "").toUpperCase(), seatType: pick(f.seatType, SEAT_TYPES, ""),
     cabin: pick(f.cabin, CABINS, "economy"), reason: pick(f.reason, REASONS, "leisure"),
     aircraft: air ? String(f.aircraft || "").toUpperCase() : "", registration: air ? String(f.registration || "").toUpperCase() : "",
-    trip: f.trip || "", note: f.note || "", status, travellers: cleanTravellers(f.travellers) ?? ["me"], ...extra,
+    trip: f.trip || "", note: f.note || "", status, travellers: cleanTravellers(f.travellers) ?? ["me"],
+    ...(cleanPnr(f.pnr) ? { pnr: cleanPnr(f.pnr) } : {}), ...(mode === "train" && cleanRail(f.rail) ? { rail: cleanRail(f.rail) } : {}), ...extra,
   };
 }
 
@@ -402,6 +404,7 @@ export function fromOpenFlightsCSV(text) {
       aircraft: g("Plane"), registration: g("Registration"), trip: g("Trip"), note: g("Note"),
       status: st === "cancelled" ? "cancelled" : undefined,
       travellers: ix("Travellers") >= 0 ? cleanTravellers(g("Travellers")) : undefined,
+      pnr: g("PNR") || undefined, rail: (() => { try { return g("Ticket") ? JSON.parse(g("Ticket")) : undefined; } catch { return undefined; } })(),
     };
   });
   return { flights, error: "" };
@@ -410,10 +413,10 @@ export function fromOpenFlightsCSV(text) {
 export function toOpenFlightsCSV(flights, ref, today = todayISO()) {
   const invS = { window: "W", aisle: "A", middle: "M" }, invC = { economy: "Y", premium: "P", business: "C", first: "F" }, invR = { leisure: "L", business: "B", crew: "C", other: "O" };
   const q = s => (/[",\n]/.test(String(s ?? "")) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ""));
-  const lines = ["Date,From,To,Flight_Number,Airline,Distance,Duration,Seat,Seat_Type,Class,Reason,Plane,Registration,Trip,Note,Status,Travellers,Mode"];
+  const lines = ["Date,From,To,Flight_Number,Airline,Distance,Duration,Seat,Seat_Type,Class,Reason,Plane,Registration,Trip,Note,Status,Travellers,Mode,PNR,Ticket"];
   [...flights].sort((a, b) => b.date.localeCompare(a.date)).forEach(f => lines.push([
     f.date + (f.time ? ` ${f.time}:00` : ""), f.from, f.to, f.flight, isAir(f) ? airlineName(ref, f.airline) : f.operator || "", Math.round((f.distanceKm || 0) / 1.609344),
-    f.duration, f.seat, invS[f.seatType] || "", invC[f.cabin] || "Y", invR[f.reason] || "L", f.aircraft, f.registration, f.trip, f.note, statusOf(f, today), travellersOf(f).join(";") || "unassigned", modeOf(f),
+    f.duration, f.seat, invS[f.seatType] || "", invC[f.cabin] || "Y", invR[f.reason] || "L", f.aircraft, f.registration, f.trip, f.note, statusOf(f, today), travellersOf(f).join(";") || "unassigned", modeOf(f), f.pnr || "", f.rail ? JSON.stringify(f.rail) : "",
   ].map(q).join(",")));
   return lines.join("\n") + "\n";
 }

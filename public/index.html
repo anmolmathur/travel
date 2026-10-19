@@ -23,6 +23,7 @@
   </a>
   <nav class="nav" id="nav" aria-label="Sections">
     <a href="#overview" data-tab="overview">Atlas</a>
+    <a href="#journeys" data-tab="journeys">Journeys</a>
     <a href="#trips" data-tab="trips">Trips</a>
     <a href="#insights" data-tab="insights">Insights</a>
     <a href="#logbook" data-tab="logbook">Logbook</a>
@@ -80,6 +81,7 @@
   </section>
 
   <section class="panel" id="p-overview"></section>
+  <section class="panel" id="p-journeys" hidden></section>
   <section class="panel" id="p-trips" hidden></section>
   <section class="panel" id="p-insights" hidden></section>
   <section class="panel" id="p-logbook" hidden>
@@ -111,10 +113,23 @@
           <button type="button" data-mode="air" aria-pressed="true">✈ Flight</button><button type="button" data-mode="train" aria-pressed="false">🚆 Train</button><button type="button" data-mode="car" aria-pressed="false">🚗 Car</button><button type="button" data-mode="bus" aria-pressed="false">🚌 Bus</button><button type="button" data-mode="ferry" aria-pressed="false">⛴ Ferry</button>
         </div>
         <input type="hidden" id="iMode" value="air">
+        <details class="sms train-only" id="smsBox"><summary>Paste an IRCTC SMS or e-ticket text to fill this in</summary>
+          <textarea id="smsText" rows="3" placeholder="PNR:2412345678,TRN:12951,DOJ:15-10-26,3A,BCT-NDLS,DP:17:00,ANMOL MATHUR+2,B4 34,B4 35,B4 36,Fare:…"></textarea>
+          <div class="row"><button class="btn small" type="button" id="smsGo">Read it</button><span class="muted" id="smsNote">Read on this device. Nothing is sent anywhere, and it works offline.</span></div></details>
         <div class="fields">
           <div class="field"><label for="iDate">Date</label><input type="date" id="iDate" required></div>
           <div class="field"><label for="iFlight" id="lFlight">Flight number</label><div class="inline"><input id="iFlight" placeholder="6E 5297"><button class="btn small lookup-only" type="button" id="lookupBtn">Look up</button></div><span class="hint" id="hFlight"></span></div>
+          <div class="field train-only"><label for="iTrainName">Train name</label><input id="iTrainName" placeholder="Mumbai Rajdhani" maxlength="60"></div>
+          <div class="field"><label for="iPnr" id="lPnr">PNR / booking ref</label><input id="iPnr" placeholder="6-character code" autocapitalize="characters" spellcheck="false" maxlength="14"><span class="hint" id="hPnr"></span></div>
           <div class="field"><label for="iTime">Departs (local)</label><input type="time" id="iTime"></div>
+          <div class="field train-only"><label for="iArr">Arrives</label><div class="inline"><input type="time" id="iArr"><select id="iArrDay" aria-label="Arrival day" style="width:auto"><option value="0">same day</option><option value="1">+1 day</option><option value="2">+2 days</option><option value="3">+3 days</option></select></div></div>
+          <div class="field train-only"><label for="iFromStn">From station</label><input id="iFromStn" placeholder="BCT" autocapitalize="characters" maxlength="6"><span class="hint" id="hFromStn"></span></div>
+          <div class="field train-only"><label for="iToStn">To station</label><input id="iToStn" placeholder="NDLS" autocapitalize="characters" maxlength="6"><span class="hint" id="hToStn"></span></div>
+          <div class="field train-only"><label for="iCls">Class</label><select id="iCls"></select></div>
+          <div class="field train-only"><label for="iQuota">Quota</label><select id="iQuota"></select></div>
+          <div class="field train-only"><label for="iRailStatus">Booking status</label><input id="iRailStatus" placeholder="CNF, RAC 12, WL 34" autocapitalize="characters" maxlength="24"></div>
+          <div class="field train-only"><label for="iPlatform">Platform</label><input id="iPlatform" placeholder="e.g. 4" maxlength="6"></div>
+          <div class="field train-only"><span class="flabel">Chart</span><label class="check"><input type="checkbox" id="iChart"> Chart prepared</label></div>
           <div class="field ground-only"><label for="iOperator">Operator</label><input id="iOperator" placeholder="Trenitalia, Uber, own car…" maxlength="60"></div>
           <div class="field"><label for="iFrom">From</label><input id="iFrom" list="apList" placeholder="BOM" required><span class="hint" id="hFrom"></span></div>
           <div class="field"><label for="iTo">To</label><input id="iTo" list="apList" placeholder="DEL" required><span class="hint" id="hTo"></span></div>
@@ -122,13 +137,14 @@
           <div class="field ground-only"><label for="iDist">Distance (km)</label><input id="iDist" inputmode="numeric" placeholder="auto"><span class="hint" id="hDist"></span></div>
           <div class="field air-only"><label for="iAircraft">Aircraft</label><input id="iAircraft" list="acList" placeholder="32N"><span class="hint" id="hAircraft"></span></div>
           <div class="field air-only"><label for="iReg">Registration</label><input id="iReg" placeholder="VT-ISK"></div>
-          <div class="field"><label for="iSeat">Seat</label><input id="iSeat" placeholder="27C"></div>
+          <div class="field not-train"><label for="iSeat">Seat</label><input id="iSeat" placeholder="27C"></div>
           <div class="field air-only"><label for="iSeatType">Seat type</label><select id="iSeatType"><option value="">Not recorded</option><option value="window">Window</option><option value="middle">Middle</option><option value="aisle">Aisle</option></select></div>
-          <div class="field"><label for="iCabin">Cabin</label><select id="iCabin"><option value="economy">Economy</option><option value="premium">Premium economy</option><option value="business">Business</option><option value="first">First</option></select></div>
+          <div class="field not-train"><label for="iCabin">Cabin</label><select id="iCabin"><option value="economy">Economy</option><option value="premium">Premium economy</option><option value="business">Business</option><option value="first">First</option></select></div>
           <div class="field"><label for="iReason">Reason</label><select id="iReason"><option value="leisure">Leisure</option><option value="business">Business</option><option value="crew">Crew</option><option value="other">Other</option></select></div>
           <div class="field"><label for="iTrip">Trip</label><input id="iTrip" placeholder="Spain 2026"></div>
           <div class="field wide"><span class="flabel" id="lWho">Who flew</span><div class="who-pick" id="iWho"></div></div>
-          <div class="field wide"><label for="iNote">Note or booking reference</label><input id="iNote" placeholder="Anything worth remembering"></div>
+          <div class="field wide train-only"><span class="flabel">Coach and berth</span><div class="pax" id="iPax"></div></div>
+          <div class="field wide"><label for="iNote">Note</label><input id="iNote" placeholder="Anything worth remembering"></div>
         </div>
         <p class="err" id="formErr" role="alert"></p>
         <div class="row"><button class="btn primary" type="submit" id="saveBtn">Save flight</button><button class="btn ghost" type="button" id="resetBtn">Clear</button></div>

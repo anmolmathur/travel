@@ -12,6 +12,12 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 **Trips.** Flights are grouped into journeys that leave home and end when you land back, with a mini-map and route chain for each. A ⋯ in the chain marks a leg that isn't in the log.
 
+**Journeys (for use on the way).** Your next trains and flights as tickets built for a phone: a countdown, the PNR or booking reference with a Copy button, each person's coach and berth, colour-coded booking status (CNF, RAC, WL), chart and platform, and one-tap links: the official PNR enquiry and NTES pages, SMS "PNR …" to 139 (works without mobile data), live running status, coach position, call 139, and flight status for flights. **Update status** records a new status, the chart, the platform and berths in a few taps. When something leaves within a day or is under way, the app opens straight to Journeys.
+
+**Train tickets (Indian Railways).** Train legs keep the PNR, train name, class, quota, station codes, arrival time, platform, booking status, chart and a coach/berth/status row for each traveller. Paste the IRCTC booking or chart SMS into the Add form to fill it in; this runs on your device, with no AI and no network. About 100 major stations map to their city's airport for the map; others ask you to pick the city.
+
+**Offline.** A service worker keeps the app and your latest logbook on the device. On a slow or missing connection it shows the saved copy with an "Offline" note, and tells you when a change couldn't be saved. Signing out clears it.
+
 **Trains, cars, buses and ferries.** Log the ground legs between flights (Milan to Rome by train, a drive to Goa) from the Add form's mode picker, a CSV `Mode` column, or an agent's `mode` field. Each end is the main airport code of its city (Milan: LIN or MXP, Rome: FCO); two airports of one city count as connected. Ground legs join your trips, light up the countries they reach and show on the map, but stay out of the flight figures (flights, airports, airlines, km flown), which get their own "On the ground" card. Distance is the straight line plus 20% unless you enter the road or rail km.
 
 **Insights.** Flights and new airports per year, a month-by-year heatmap, month and weekday patterns, top routes and airports, aircraft families and types, haul bands, domestic vs international and a rough CO₂ estimate.

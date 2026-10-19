@@ -396,3 +396,52 @@ body:not([data-tab="overview"]) .scroll-cue{display:none}
 .ai-set .hint a{color:var(--sky)}
 .ok-msg{color:var(--ok,#5FD6A8);font-size:13.5px;min-height:1.2em;margin:6px 0 0}
 @media (max-width:640px){.ai-lbl{display:none}}
+
+/* train tickets on the Add form */
+.form:not(.mode-train) .train-only,.form.mode-train .not-train{display:none!important}
+.check{display:inline-flex;align-items:center;gap:8px;height:40px;font-size:14px;color:var(--ink-2);cursor:pointer}
+.check input{width:18px;height:18px;accent-color:var(--rose)}
+.sms{margin:0 0 14px;border:1px dashed var(--line-2);border-radius:12px;padding:10px 12px;background:var(--bg-2)}
+.sms summary{cursor:pointer;color:var(--ink-2);font-size:14px}
+.sms textarea{margin-top:10px;font:13px/1.45 var(--f-mono)}
+.sms .row{margin-top:8px;align-items:center;flex-wrap:wrap}
+.pax{display:flex;flex-direction:column;gap:8px}
+.paxrow{display:grid;grid-template-columns:auto minmax(60px,1fr) 90px 80px 130px 110px;gap:8px;align-items:center}
+.paxrow .pn{font-size:14px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.paxrow input,.paxrow select{height:38px;border-radius:10px;border:1px solid var(--line-2);background:var(--bg-2);padding:0 10px;min-width:0;width:100%}
+@media (max-width:640px){.paxrow{grid-template-columns:repeat(4,minmax(0,1fr));row-gap:6px}.paxrow .av{display:none}.paxrow .pn{grid-column:1/5}}
+.field label.check{font:400 14px var(--f-body);letter-spacing:0;text-transform:none;color:var(--ink-2)}
+
+/* Journeys: the ticket view used on the way */
+body[data-tab="journeys"] .hero{display:none}
+.jlist{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr))}
+.jcard{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:18px 18px 14px;display:flex;flex-direction:column;gap:12px;position:relative;overflow:hidden}
+.jcard.next{border-color:var(--rose);box-shadow:0 0 0 1px var(--rose) inset,0 18px 50px -24px rgba(255,77,141,.6)}
+.jcard.next::before{content:"Next";position:absolute;right:14px;top:14px;font:600 10.5px/1 var(--f-body);letter-spacing:.08em;text-transform:uppercase;color:#1B0710;background:var(--grad);padding:4px 8px;border-radius:999px}
+.jtop{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;padding-right:56px}
+.jmode{font:700 15px var(--f-mono)}
+.jwhen{color:var(--ink-2);font-size:14px}
+.jwhen b{color:var(--ink)}.jwhen .live{color:var(--good)}
+.jcard h3{margin:-4px 0 0;font:400 24px/1.15 var(--f-display)}
+.jroute{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px}
+.jroute>div{display:flex;flex-direction:column;gap:2px}
+.jroute>div:last-child{text-align:right;align-items:flex-end}
+.jroute b{font:700 26px/1 var(--f-mono);letter-spacing:.02em}
+.jroute small{color:var(--ink-3);font-size:12.5px}
+.jroute span{font:600 15px var(--f-mono);color:var(--ink-2)}
+.jroute i{font-style:normal;font-size:20px;opacity:.85}
+.jmeta{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;font-size:13.5px;color:var(--ink-2)}
+.chip{display:inline-block;font:700 12px/1 var(--f-mono);padding:5px 9px;border-radius:999px;background:var(--surface-3);color:var(--ink)}
+.chip.ok{background:rgba(95,214,168,.16);color:var(--good)}.chip.rac{background:rgba(242,176,78,.16);color:var(--warn)}.chip.wl{background:rgba(255,107,107,.16);color:var(--bad)}
+.jpnr{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase}
+.jpnr b{font-size:20px;letter-spacing:.08em;color:var(--ink);text-transform:none}
+.jpax{display:flex;flex-direction:column;gap:6px;border-top:1px dashed var(--line-2);padding-top:10px}
+.jp{display:grid;grid-template-columns:auto 1fr auto auto auto;gap:10px;align-items:center;font-size:14px}
+.jp .berth{font:700 20px var(--f-mono);letter-spacing:.02em}
+.jp small{color:var(--ink-3)}
+.jlinks{display:flex;flex-wrap:wrap;gap:6px}
+.jcard .row{margin:0;gap:6px}
+@media (max-width:520px){.jroute b{font-size:22px}.jp{grid-template-columns:auto 1fr auto;}.jp small,.jp .chip{grid-column:2/4;justify-self:start}}
+
+/* offline */
+.offline{position:sticky;top:0;z-index:60;background:rgba(242,176,78,.95);color:#201300;font-size:13.5px;text-align:center;padding:6px 12px}
