@@ -504,7 +504,7 @@ function renderTrips() {
       const chain = legs.map((f, i) => `${i === 0 ? `<b>${f.from}</b>` : f.from !== legs[i - 1].to ? `${joined(f.from, legs[i - 1].to) ? "<i>·</i>" : '<i title="Leg not logged">⋯</i>'}<b>${f.from}</b>` : ""}${hop(f)}<b>${f.to}</b>`).join("");
       const nAir = legs.filter(isAir).length, byMode = MODES.filter(m => m !== "air").map(m => [m, legs.filter(f => modeOf(f) === m).length]).filter(([, n]) => n);
       const legCount = [nAir ? `${nAir} flight${nAir > 1 ? "s" : ""}` : "", ...byMode.map(([m, n]) => `${n} ${MODE_INFO[m].label.toLowerCase()}${n > 1 && m !== "ferry" ? "s" : ""}`)].filter(Boolean).join(" · ");
-      return `<article class="trip${ui.trip === t.id ? " sel" : ""}" data-trip="${esc(t.id)}" tabindex="0">
+      return `<article class="trip${ui.trip === t.id ? " picked" : ""}" data-trip="${esc(t.id)}" tabindex="0">
         ${tripSvg(t)}
         <div><div class="when">${t.when.toUpperCase()} · ${t.days} DAY${t.days > 1 ? "S" : ""}${t.upcoming ? ' · <span class="tag up">upcoming</span>' : ""}</div>
           <h4>${esc(t.ai?.name || t.name)}</h4>${t.ai?.summary ? `<p class="sum">${esc(t.ai.summary)}</p>` : ""}<div class="chain">${chain}</div>
@@ -522,7 +522,7 @@ function renderTrips() {
 function selectTrip(id) {
   const t = tripData.trips.find(x => x.id === id); if (!t) return;
   ui.trip = ui.trip === id ? null : id;
-  $$(".trip").forEach(a => a.classList.toggle("sel", a.dataset.trip === ui.trip));
+  $$(".trip").forEach(a => a.classList.toggle("picked", a.dataset.trip === ui.trip));
   if (!ui.trip) { globe.setHighlight(null); return; }
   globe.setHighlight(new Set(t.flights));
   const pts = t.flights.map(i => flights.find(f => f.id === i)).filter(Boolean).flatMap(f => [ap(f.from), ap(f.to)]).map(a => [a.lon, a.lat]);
@@ -603,7 +603,7 @@ function renderTable() {
   const shown = list.slice(0, ui.limit);
   $("#tbody").innerHTML = shown.length ? shown.map(f => {
     const st = statusOf(f), fl = FLAGS.get(f.id);
-    return `<tr data-id="${esc(f.id)}" class="${st === "cancelled" ? "cx" : ""}${ui.sel === f.id ? " sel" : ""}">
+    return `<tr data-id="${esc(f.id)}" class="${st === "cancelled" ? "cx" : ""}${ui.sel === f.id ? " picked" : ""}">
       <td class="mono">${f.date}</td><td class="mono">${isAir(f) ? esc(fnPretty(f)) : `<span class="gm" title="${MODE_INFO[modeOf(f)].label}">${MODE_INFO[modeOf(f)].icon}</span> ${esc(f.flight || MODE_INFO[modeOf(f)].label)}`}</td><td class="route"><b>${f.from}</b><i>${isAir(f) ? "→" : MODE_INFO[modeOf(f)].icon}</i><b>${f.to}</b></td>
       <td>${isAir(f) ? `<span class="al-cell"><img src="https://pics.avs.io/120/48/${esc(f.airline)}.png" alt="" loading="lazy" data-fb="img">${esc(airlineName(REF, f.airline))}</span>` : `<span class="muted">${esc(f.operator || MODE_INFO[modeOf(f)].label)}</span>`}</td>
       <td class="r mono">${fmt(f.distanceKm || 0)}</td><td class="r mono">${hm(durMin(f))}</td><td class="mono" title="${esc(planeName(REF, f.aircraft))}">${esc(f.aircraft || "")}</td><td class="mono">${esc(f.seat || "")}</td>

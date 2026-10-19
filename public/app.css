@@ -240,7 +240,8 @@ h1,h2,h3{margin:0;font-family:var(--f-display);font-weight:500;letter-spacing:-.
 .tl-year .btn{margin-left:auto}
 .trip{display:grid;grid-template-columns:132px minmax(0,1fr) auto;gap:18px;align-items:center;padding:14px 18px 14px 14px;border-radius:var(--radius);background:var(--surface);border:1px solid var(--line);cursor:pointer;transition:border-color .2s,background .2s}
 .trip:hover{border-color:var(--line-2);background:var(--surface-2)}
-.trip.sel{border-color:var(--rose);box-shadow:0 0 0 1px var(--rose) inset}
+/* "picked", not "sel": .sel is the dropdown style above, and sharing it squashed the chosen card to 36px */
+.trip.picked{border-color:var(--rose);box-shadow:0 0 0 1px var(--rose) inset}
 .trip svg.mini{width:132px;height:84px;border-radius:10px;background:var(--bg-2)}
 .trip h4{margin:0;font:400 22px/1.2 var(--f-display);letter-spacing:-.01em}
 .trip .when{font:12px var(--f-mono);color:var(--ink-3);letter-spacing:.04em}
@@ -264,7 +265,7 @@ table.log{border-collapse:collapse;width:100%;font-size:13.5px}
 .log tr:last-child td{border-bottom:0}
 .log tbody tr{cursor:pointer}
 .log tbody tr:hover td{background:rgba(26,38,64,.5)}
-.log tr.sel td{background:rgba(255,77,141,.08)}
+.log tr.picked td{background:rgba(255,77,141,.08)}
 .log tr.cx td:not(.st):not(.act){color:var(--ink-3);text-decoration:line-through;text-decoration-color:rgba(116,131,160,.6)}
 .log .r{text-align:right}
 .log .al-cell{display:flex;align-items:center;gap:8px}
