@@ -16,7 +16,7 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 **Train tickets (Indian Railways).** Train legs keep the PNR, train name, class, quota, station codes, arrival time, platform, booking status, chart and a coach/berth/status row for each traveller. Paste the IRCTC booking or chart SMS into the Add form to fill it in; this runs on your device, with no AI and no network. About 100 major stations map to their city's airport for the map; others ask you to pick the city.
 
-**Offline.** A service worker keeps the app and your latest logbook on the device. On a slow or missing connection it shows the saved copy with an "Offline" note, and tells you when a change couldn't be saved. Signing out clears it.
+**Offline.** A service worker keeps the app and your latest logbook on the device. On a slow or missing connection it shows the saved copy with an "Offline" note, and tells you when a change couldn't be saved. Signing out clears it. Added to the home screen, Wander refreshes when you pull down from the top, and quietly fetches the latest data when you come back to it after a minute or more.
 
 **Trains, cars, buses and ferries.** Log the ground legs between flights (Milan to Rome by train, a drive to Goa) from the Add form's mode picker, a CSV `Mode` column, or an agent's `mode` field. Each end is the main airport code of its city (Milan: LIN or MXP, Rome: FCO); two airports of one city count as connected. Ground legs join your trips, light up the countries they reach and show on the map, but stay out of the flight figures (flights, airports, airlines, km flown), which get their own "On the ground" card. Distance is the straight line plus 20% unless you enter the road or rail km.
 

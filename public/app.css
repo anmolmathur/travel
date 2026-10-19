@@ -446,3 +446,12 @@ body[data-tab="journeys"] .hero{display:none}
 
 /* offline */
 .offline{position:sticky;top:0;z-index:60;background:rgba(242,176,78,.95);color:#201300;font-size:13.5px;text-align:center;padding:6px 12px}
+
+/* pull to refresh (installed app only) */
+.ptr{position:fixed;left:50%;top:calc(env(safe-area-inset-top, 0px) + 8px);z-index:80;transform:translate(-50%,-56px);opacity:0;display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;background:rgba(12,19,36,.95);border:1px solid var(--line-2);box-shadow:0 10px 30px -10px #000;font-size:13px;color:var(--ink-2);pointer-events:none;transition:opacity .15s}
+.ptr b{font-weight:500}
+.ptr-spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--line-2);border-top-color:var(--rose);transition:transform .2s}
+.ptr.ready .ptr-spin{transform:rotate(180deg);border-top-color:var(--good)}
+.ptr.busy .ptr-spin{animation:ptrspin .7s linear infinite}
+@keyframes ptrspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.ptr.busy .ptr-spin{animation:none}}
