@@ -32,6 +32,41 @@ async function api(path, opts = {}) {
   }
   return data;
 }
+/**
+ * Pull down from the top to refresh. Only in the installed app (home screen): there the browser offers no
+ * pull-to-refresh of its own, while in a normal tab the browser's own gesture already does this.
+ */
+function pullToRefresh() {
+  const installed = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  if (!installed || !("ontouchstart" in window)) return;
+  const ind = document.createElement("div"); ind.className = "ptr"; ind.setAttribute("aria-hidden", "true");
+  ind.innerHTML = '<span class="ptr-spin"></span><b>Pull to refresh</b>'; document.body.append(ind);
+  const label = ind.querySelector("b"), FULL = 72;
+  let start = null, pull = 0, busy = false;
+  const show = d => { ind.style.transform = `translate(-50%, ${Math.round(d - 56)}px)`; ind.style.opacity = String(Math.min(1, d / 40)); };
+  const reset = () => { ind.classList.remove("ready", "busy"); show(0); pull = 0; };
+  addEventListener("touchstart", e => {
+    const t = e.target;
+    start = !busy && e.touches.length === 1 && window.scrollY <= 0 && !t.closest?.(".modal, .drawer, input, textarea, select, .hero:fullscreen, .pseudo-fs")
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+  }, { passive: true });
+  addEventListener("touchmove", e => {
+    if (!start) return;
+    const dx = e.touches[0].clientX - start.x, dy = e.touches[0].clientY - start.y;
+    if (window.scrollY > 0 || dy < 0 || Math.abs(dx) > Math.abs(dy)) { start = null; reset(); return; } // a scroll or a sideways globe drag
+    pull = Math.min(FULL * 1.5, dy * 0.5); show(pull);
+    const ready = pull >= FULL; ind.classList.toggle("ready", ready); label.textContent = ready ? "Release to refresh" : "Pull to refresh";
+  }, { passive: true });
+  addEventListener("touchend", () => {
+    if (!start) return;
+    start = null;
+    if (pull < FULL) { reset(); return; }
+    busy = true; ind.classList.add("busy"); label.textContent = "Refreshing…"; show(FULL);
+    // A full reload picks up new data and any newly deployed version of the app; offline it comes from the saved copy.
+    setTimeout(() => location.reload(), 150);
+  }, { passive: true });
+  addEventListener("touchcancel", () => { start = null; if (!busy) reset(); }, { passive: true });
+}
 /** Shown while the service worker answers from the copy saved on this device. */
 function offlineBanner(savedAt) {
   let b = $("#offline");
@@ -173,6 +208,13 @@ async function boot() {
   wire();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { /* offline copy is a bonus */ });
   window.addEventListener("online", () => reload().catch(() => {}));
+  pullToRefresh();
+  // Coming back to the app after a while (switching apps, unlocking the phone) fetches the latest data quietly.
+  let hiddenAt = 0;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 60_000 && REF) reload().catch(() => {});
+  });
   me = await api("/api/me").catch(() => ({ canRead: false }));
   if (!me.canRead) { showLogin(); return; }
   document.body.classList.toggle("readonly", !me.canWrite);
