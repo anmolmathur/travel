@@ -11,6 +11,15 @@ const flightFields = {
   flight: { type: "string", description: "Airline IATA code plus number, e.g. 6E2114. For a train or bus, its service number (optional)." },
   operator: { type: "string", description: "Ground legs only: the operator, e.g. Trenitalia, Uber." },
   distanceKm: { type: "number", description: "Ground legs only: road or rail km, if known. Otherwise estimated from the straight line." },
+  pnr: { type: "string", description: "Booking reference: the 10-digit PNR for Indian Railways, or the airline's booking code." },
+  rail: { type: "object", description: "Train legs only: ticket details.", properties: {
+    trainName: { type: "string" }, cls: { type: "string", enum: ["1A", "2A", "3A", "3E", "EC", "EA", "CC", "VS", "SL", "2S", "FC"] },
+    quota: { type: "string", enum: ["GN", "TQ", "PT", "LD", "SS", "HP", "DF", "FT"] },
+    fromStn: { type: "string", description: "Railway station code, e.g. BCT" }, toStn: { type: "string", description: "Railway station code, e.g. NDLS" },
+    arr: { type: "string", description: "Arrival time HH:MM" }, arrDay: { type: "number", description: "Days after departure the train arrives (0, 1, 2)" },
+    platform: { type: "string" }, status: { type: "string", description: "Booking status, e.g. CNF, RAC 12, WL 34" }, chart: { type: "boolean", description: "Chart prepared" },
+    passengers: { type: "array", items: { type: "object", properties: { who: { type: "string", description: "Person id" }, coach: { type: "string" }, berth: { type: "string" }, berthType: { type: "string", enum: ["LB", "MB", "UB", "SL", "SU", "WS", "MS", "AS"] }, status: { type: "string" } } } },
+  } },
   time: { type: "string", description: "Local departure time HH:MM." },
   duration: { type: "string", description: "Block time h:mm. Estimated from distance if omitted." },
   aircraft: { type: "string", description: "IATA aircraft type code, e.g. 32N, 77W." },
@@ -123,7 +132,7 @@ async function callTool(name, a, service) {
 }
 
 function slim(f) {
-  const { id, date, time, from, to, flight, operator, distanceKm, duration, aircraft, seat, seatType, cabin, reason, status, note, trip } = f;
+  const { id, date, time, from, to, flight, operator, distanceKm, duration, aircraft, seat, seatType, cabin, reason, status, note, trip, pnr, rail } = f;
   const travellers = Array.isArray(f.travellers) ? f.travellers : ["me"], mode = f.mode && f.mode !== "air" ? f.mode : undefined;
-  return Object.fromEntries(Object.entries({ id, mode, date, time, from, to, flight, operator, distanceKm, duration, aircraft, seat, seatType, cabin, reason, status, note, trip, travellers }).filter(([, v]) => v !== "" && v !== undefined));
+  return Object.fromEntries(Object.entries({ id, mode, date, time, from, to, flight, operator, distanceKm, duration, aircraft, seat, seatType, cabin, reason, status, note, trip, pnr, rail, travellers }).filter(([, v]) => v !== "" && v !== undefined));
 }

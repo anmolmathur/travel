@@ -58,6 +58,8 @@ export function withPrompts(core) {
 Today is ${today}.
 Return a JSON array. Each item:
 {"mode":"air|train|car|bus|ferry","date":"YYYY-MM-DD","time":"HH:MM local departure or empty","from":"IATA airport code","to":"IATA airport code",
+ "pnr":"booking reference / PNR (10 digits for Indian Railways) or empty",
+ "rail":"train legs only, else omit: {\"trainName\":\"\",\"cls\":\"1A|2A|3A|3E|EC|CC|SL|2S\",\"quota\":\"GN|TQ|PT|LD|SS\",\"fromStn\":\"station code e.g. BCT\",\"toStn\":\"station code e.g. NDLS\",\"arr\":\"HH:MM\",\"status\":\"CNF|RAC n|WL n\",\"passengers\":[{\"coach\":\"B4\",\"berth\":\"34\",\"berthType\":\"LB|MB|UB|SL|SU|WS|MS|AS\",\"status\":\"CNF\"}]}",
  "operator":"for train/car/bus/ferry legs, the operator (e.g. Trenitalia), else empty",
  "flight":"airline IATA code + number, no space, e.g. 6E5297","seat":"e.g. 27C or empty","seatType":"window|middle|aisle or empty",
  "cabin":"economy|premium|business|first","aircraft":"IATA aircraft type code like 32N or 77W if stated, else empty",

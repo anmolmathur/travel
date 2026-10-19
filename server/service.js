@@ -5,6 +5,7 @@ import {
   toOpenFlightsCSV, flightsAsText, todayISO, airlineName, countryName, hm, travellersOf, cleanTravellers, forPerson, slug,
   isAir, modeOf, MODE_INFO,
 } from "../public/lib/core.js";
+import { cleanPnr, cleanRail } from "../public/lib/rail.js";
 import { createAI, PROVIDERS } from "./ai.js";
 
 export class InputError extends Error { constructor(msg, status = 400) { super(msg); this.status = status; } }
@@ -137,6 +138,12 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, lookupPr
     const next = { ...old };
     for (const k of allowed) if (k in fields) next[k] = fields[k];
     if ("travellers" in fields) next.travellers = checkTravellers(cleanTravellers(fields.travellers)) ?? ["me"];
+    // Quick updates from the Journeys screen: PNR, and a train's status, chart, platform and berths.
+    if ("pnr" in fields) { const p = cleanPnr(fields.pnr); if (p) next.pnr = p; else delete next.pnr; }
+    if ("rail" in fields) {
+      if (modeOf(old) !== "train") throw new InputError("Ticket details are only for train journeys.");
+      const r = cleanRail({ ...fields.rail, updatedAt: new Date().toISOString() }); if (r) next.rail = r; else delete next.rail;
+    }
     if (next.status === "flown" || next.status === "upcoming") next.status = next.date > today() ? "upcoming" : "flown";
     if (fields.status === "cancelled") next.cancelledAt = new Date().toISOString();
     const err = validate(normalize(next, ref), ref); if (err) throw new InputError(err);

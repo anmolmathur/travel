@@ -3,6 +3,7 @@ import {
   createRef, computeStats, computeFlags, statusOf, durMin, hm, estDur, hav, fnPretty, niceDate, airlineName, planeName, countryName,
   validate, DEFUNCT, CABINS, REASONS, MONTHS, todayISO, dayDiff, MODES, MODE_INFO, modeOf, isAir, legName, legKm,
 } from "./lib/core.js";
+import { RAIL_CLASSES, RAIL_QUOTAS, BERTH_TYPES, STATIONS, parseIrctc, statusKind, legLinks } from "./lib/rail.js";
 import { createGlobe, GROUND_STYLE } from "./globe.js";
 
 const $ = s => document.querySelector(s);
@@ -18,7 +19,10 @@ const ui = { person: (() => { try { return localStorage.getItem("wander.person")
 
 /* ---------------- helpers ---------------- */
 async function api(path, opts = {}) {
-  const res = await fetch(path, { credentials: "same-origin", ...opts, headers: { ...(opts.body && typeof opts.body === "string" && !opts.raw ? { "content-type": "application/json" } : {}), ...(opts.headers || {}) } });
+  let res;
+  try { res = await fetch(path, { credentials: "same-origin", ...opts, headers: { ...(opts.body && typeof opts.body === "string" && !opts.raw ? { "content-type": "application/json" } : {}), ...(opts.headers || {}) } }); }
+  catch { throw new Error(navigator.onLine === false || (opts.method && opts.method !== "GET") ? "You're offline, so this wasn't saved. Try again when you have signal." : "Couldn't reach Wander. Check your connection."); }
+  if (!opts.method || opts.method === "GET") offlineBanner(res.headers.get("x-wander-offline") ? res.headers.get("x-wander-saved") : null);
   const data = res.headers.get("content-type")?.includes("json") ? await res.json() : await res.text();
   if (res.status === 401 && path !== "/api/login") { showLogin(); }
   if (!res.ok) {
@@ -27,6 +31,13 @@ async function api(path, opts = {}) {
     throw Object.assign(new Error(msg), { status: res.status });
   }
   return data;
+}
+/** Shown while the service worker answers from the copy saved on this device. */
+function offlineBanner(savedAt) {
+  let b = $("#offline");
+  if (!savedAt) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement("div"); b.id = "offline"; b.className = "offline"; b.setAttribute("role", "status"); document.body.prepend(b); }
+  b.textContent = `Offline: showing what was saved on this device ${new Date(savedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}.`;
 }
 function toast(msg, undo) {
   const t = $("#toast"); t.innerHTML = `<span>${esc(msg)}</span>`;
@@ -160,6 +171,8 @@ const flown = list => list.filter(f => statusOf(f) === "flown");
 /* ---------------- boot ---------------- */
 async function boot() {
   wire();
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { /* offline copy is a bonus */ });
+  window.addEventListener("online", () => reload().catch(() => {}));
   me = await api("/api/me").catch(() => ({ canRead: false }));
   if (!me.canRead) { showLogin(); return; }
   document.body.classList.toggle("readonly", !me.canWrite);
@@ -179,7 +192,8 @@ async function boot() {
   fillLists();
   await reload();
   resetForm();
-  go((location.hash || "#overview").slice(1), true);
+  // On the move: open straight to Journeys when something leaves within a day or is under way.
+  go(location.hash ? location.hash.slice(1) : nextJourney() ? "journeys" : "overview", true);
 }
 async function reload() {
   const [{ flights: fs }, { people }] = await Promise.all([api("/api/flights"), api("/api/people")]);
@@ -196,6 +210,7 @@ function render() {
   const t = ui.tab;
   if (t === "overview") renderOverview();
   if (t === "trips") renderTrips();
+  if (t === "journeys") renderJourneys();
   if (t === "insights") renderInsights();
   if (t === "logbook") renderTable();
   if (t === "review") renderReview();
@@ -365,6 +380,90 @@ async function whereNext() {
 }
 function emptyState() {
   return `<div class="empty"><h2>No flights here yet</h2><p>${me.canWrite ? "Add one, paste a booking into Smart add, or import an OpenFlights CSV from the Logbook." : "Nothing to show for this filter."}</p></div>`;
+}
+
+/* ---------------- journeys: the next trains and flights, for use on the way ---------------- */
+const depTime = f => new Date(`${f.date}T${f.time || "00:00"}:00`);
+function arrTime(f) {
+  if (f.rail?.arr) { const d = new Date(`${f.date}T${f.rail.arr}:00`); d.setDate(d.getDate() + (f.rail.arrDay || 0)); return d; }
+  return new Date(depTime(f).getTime() + durMin(f) * 60000);
+}
+const liveLegs = () => flights.filter(f => inView(f) && statusOf(f) !== "cancelled");
+/** A leg leaving within 24 hours, or under way now. */
+function nextJourney() {
+  const now = Date.now();
+  return liveLegs().find(f => f.time && depTime(f) - now < 864e5 && arrTime(f) > now - 36e5);
+}
+function untilText(f) {
+  const now = Date.now(), dep = depTime(f), arr = arrTime(f), d = dayDiff(TODAY, f.date);
+  const day = d === 0 ? "Today" : d === 1 ? "Tomorrow" : d === -1 ? "Yesterday" : niceDate(f.date);
+  if (!f.time) return day;
+  if (now >= dep && now < arr) return `${day} · ${f.time} · <b class="live">under way, arrives ${arr.toTimeString().slice(0, 5)}</b>`;
+  if (now >= arr) return `${day} · ${f.time} · arrived`;
+  const m = Math.round((dep - now) / 60000), h = Math.floor(m / 60);
+  return `${day} · ${f.time} · <b>in ${h >= 48 ? `${Math.round(h / 24)} days` : h ? `${h} h ${m % 60} m` : `${m} min`}</b>`;
+}
+function renderJourneys() {
+  const el = $("#p-journeys"), now = Date.now();
+  const list = liveLegs().filter(f => arrTime(f) > now - 2 * 864e5).sort((a, b) => depTime(a) - depTime(b)).slice(0, 20);
+  if (!list.length) { el.innerHTML = `<div class="empty"><h2>No journeys coming up</h2><p>Add a flight or train with a future date and it appears here as a ticket, with your PNR, coach and berth, and quick links for status.</p></div>`; return; }
+  const stnName = (code, apc) => STATIONS[code]?.[0] || ap(apc)?.city || "";
+  const card = f => {
+    const mode = modeOf(f), r = f.rail || {}, train = mode === "train";
+    const head = train ? `🚆 ${esc(f.flight || "Train")}` : isAir(f) ? `✈ ${esc(fnPretty(f) || "Flight")}` : `${MODE_INFO[mode].icon} ${esc(legName(f))}`;
+    const from = train && r.fromStn ? r.fromStn : f.from, to = train && r.toStn ? r.toStn : f.to;
+    const kind = statusKind(r.status);
+    const pax = (r.passengers || []).map((p, i) => `<div class="jp">${avatar(p.who || whoOf(f)[i] || "me", true)}<span>${esc(pName(p.who || whoOf(f)[i] || "me"))}</span>
+      <b class="berth">${esc([p.coach, p.berth].filter(Boolean).join(" · ") || "—")}</b><small>${esc(BERTH_TYPES[p.berthType] || "")}</small>${p.status ? `<span class="chip ${statusKind(p.status)}">${esc(p.status)}</span>` : ""}</div>`).join("");
+    const links = legLinks({ ...f, mode }).map(l => `<a class="btn small${l.official ? "" : " ghost"}" href="${esc(l.href)}" ${/^https?:/.test(l.href) ? 'target="_blank" rel="noopener"' : ""} title="${esc(l.note || (l.official ? "Official Indian Railways site" : ""))}"${l.copy ? ` data-copy="${esc(l.copy)}"` : ""}>${esc(l.label)}</a>`).join("");
+    return `<article class="jcard${nextJourney() === f ? " next" : ""}" data-id="${esc(f.id)}">
+      <div class="jtop"><span class="jmode">${head}</span><span class="jwhen">${untilText(f)}</span></div>
+      ${r.trainName ? `<h3>${esc(r.trainName)}</h3>` : ""}
+      <div class="jroute"><div><b>${esc(from)}</b><small>${esc(stnName(from, f.from))}</small><span>${esc(f.time || "")}</span></div><i>${isAir(f) ? "✈" : MODE_INFO[mode].icon}</i>
+        <div><b>${esc(to)}</b><small>${esc(stnName(to, f.to))}</small><span>${esc(r.arr ? r.arr + (r.arrDay ? ` +${r.arrDay}` : "") : "")}</span></div></div>
+      <div class="jmeta">${r.status ? `<span class="chip ${kind}">${esc(r.status)}</span>` : ""}${r.cls ? `<span>${esc(r.cls)} · ${esc(RAIL_CLASSES[r.cls])}</span>` : ""}${r.quota && r.quota !== "GN" ? `<span>${esc(RAIL_QUOTAS[r.quota])}</span>` : ""}
+        ${train ? `<span>${r.chart ? "Chart prepared" : "Chart not prepared yet"}</span>` : ""}${r.platform ? `<span>Platform <b>${esc(r.platform)}</b></span>` : ""}${!train && f.seat ? `<span>Seat <b>${esc(f.seat)}</b></span>` : ""}
+        ${r.updatedAt ? `<span class="muted">updated ${esc(new Date(r.updatedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</span>` : ""}</div>
+      ${f.pnr ? `<div class="jpnr">${train ? "PNR" : "Booking ref"} <b class="mono">${esc(f.pnr)}</b><button class="btn small ghost" type="button" data-copy="${esc(f.pnr)}">Copy</button></div>` : ""}
+      ${pax ? `<div class="jpax">${pax}</div>` : ""}
+      ${links ? `<div class="jlinks">${links}</div>` : ""}
+      <div class="row owner-only">${train ? '<button class="btn small" type="button" data-upd>Update status</button>' : ""}<button class="btn small ghost" type="button" data-edit>Edit</button></div>
+    </article>`;
+  };
+  el.innerHTML = `<div class="sec-head"><h2>Journeys</h2><p>Your next trains and flights. Tickets are saved on this device too, so they open without signal.</p></div><div class="jlist">${list.map(card).join("")}</div>`;
+  el.onclick = async e => {
+    const c = e.target.closest("[data-copy]");
+    if (c) { if (c.tagName === "A") { try { await navigator.clipboard.writeText(c.dataset.copy); toast(`PNR ${c.dataset.copy} copied: paste it on the page that opens`); } catch { /* opening the link is enough */ } return; }
+      try { await navigator.clipboard.writeText(c.dataset.copy); toast("Copied"); } catch { toast(c.dataset.copy); } return; }
+    const card = e.target.closest(".jcard"), f = card && flights.find(x => x.id === card.dataset.id); if (!f) return;
+    if (e.target.closest("[data-edit]")) { loadForm(f); go("add"); }
+    if (e.target.closest("[data-upd]")) openRailUpdate(f);
+  };
+}
+/** Quick update while travelling: booking status, chart, platform and each person's coach and berth. */
+function openRailUpdate(f) {
+  const r = f.rail || {}, who = whoOf(f);
+  const pax = who.map((id, i) => ({ who: id, ...((r.passengers || []).find(p => p.who === id) || (r.passengers || [])[i] || {}) }));
+  openModal(`<div class="story"><p class="eyebrow">${esc(f.flight || "Train")} · ${esc(niceDate(f.date))}</p><h2 id="modalTitle">Update this ticket</h2>
+    <p class="muted">After the chart is prepared, copy the coach and berth from the PNR status page or the SMS.</p>
+    <div class="fields">
+      <div class="field"><label for="uStatus">Booking status</label><input id="uStatus" value="${esc(r.status || "")}" placeholder="CNF, RAC 12, WL 34" autocapitalize="characters"></div>
+      <div class="field"><label for="uPlatform">Platform</label><input id="uPlatform" value="${esc(r.platform || "")}" maxlength="6"></div>
+      <div class="field"><span class="flabel">Chart</span><label class="check"><input type="checkbox" id="uChart"${r.chart ? " checked" : ""}> Chart prepared</label></div>
+    </div>
+    <div class="pax">${pax.map(p => `<div class="paxrow" data-who="${esc(p.who)}">${avatar(p.who, true)}<span class="pn">${esc(pName(p.who))}</span>
+      <input data-k="coach" value="${esc(p.coach || "")}" placeholder="Coach" maxlength="5" autocapitalize="characters"><input data-k="berth" value="${esc(p.berth || "")}" placeholder="Berth" maxlength="4" inputmode="numeric">
+      <select data-k="berthType"><option value="">Type</option>${Object.entries(BERTH_TYPES).map(([c, n]) => `<option value="${c}"${p.berthType === c ? " selected" : ""}>${c} · ${n}</option>`).join("")}</select>
+      <input data-k="status" value="${esc(p.status || "")}" placeholder="Status" maxlength="20" autocapitalize="characters"></div>`).join("")}</div>
+    <p class="err" id="uErr"></p><div class="row"><button class="btn primary" type="button" id="uSave">Save</button></div></div>`);
+  $("#uSave").onclick = async () => {
+    const passengers = $$("#modalBody .paxrow").map(row => ({ who: row.dataset.who, ...Object.fromEntries([...row.querySelectorAll("[data-k]")].map(i => [i.dataset.k, i.value])) }));
+    const rail = { ...r, status: $("#uStatus").value, platform: $("#uPlatform").value, chart: $("#uChart").checked, passengers };
+    try {
+      const doc = await api(`/api/flights/${encodeURIComponent(f.id)}`, { method: "PATCH", body: JSON.stringify({ rail }) });
+      Object.assign(f, doc); $("#modal").hidden = true; renderJourneys(); toast("Ticket updated");
+    } catch (e) { $("#uErr").textContent = e.message; }
+  };
 }
 
 /* ---------------- trips ---------------- */
@@ -558,6 +657,44 @@ function renderReview() {
 function fillLists() {
   $("#apList").innerHTML = [...REF.ap.values()].map(a => `<option value="${a.code}">${esc(a.city || "")} · ${esc(a.name)} (${a.cc})</option>`).join("");
   $("#acList").innerHTML = Object.entries(REF.planes).map(([c, n]) => `<option value="${esc(c)}">${esc(n)}</option>`).join("");
+  $("#iCls").innerHTML = `<option value="">Not recorded</option>` + Object.entries(RAIL_CLASSES).map(([c, n]) => `<option value="${c}">${c} · ${esc(n)}</option>`).join("");
+  $("#iQuota").innerHTML = `<option value="">Not recorded</option>` + Object.entries(RAIL_QUOTAS).map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join("");
+}
+/* Train tickets: one coach/berth row per traveller ticked in "Who travelled". */
+function paxVals() {
+  return $$("#iPax .paxrow").map(r => ({ who: r.dataset.who, coach: r.querySelector("[data-k=coach]").value, berth: r.querySelector("[data-k=berth]").value, berthType: r.querySelector("[data-k=berthType]").value, status: r.querySelector("[data-k=status]").value }))
+    .filter(p => p.coach || p.berth || p.berthType || p.status);
+}
+function renderPax(values) {
+  const keep = values || Object.fromEntries(paxVals().map(p => [p.who, p]));
+  const who = $$("#iWho input:checked").map(i => i.value);
+  const types = `<option value="">Type</option>` + Object.entries(BERTH_TYPES).map(([c, n]) => `<option value="${c}">${c} · ${n}</option>`).join("");
+  $("#iPax").innerHTML = who.map(id => { const p = keep[id] || {};
+    return `<div class="paxrow" data-who="${esc(id)}">${avatar(id, true)}<span class="pn">${esc(pName(id))}</span>
+      <input data-k="coach" placeholder="Coach B4" value="${esc(p.coach || "")}" maxlength="5" autocapitalize="characters" aria-label="Coach for ${esc(pName(id))}">
+      <input data-k="berth" placeholder="Berth 34" value="${esc(p.berth || "")}" maxlength="4" inputmode="numeric" aria-label="Berth for ${esc(pName(id))}">
+      <select data-k="berthType" aria-label="Berth type for ${esc(pName(id))}">${types}</select>
+      <input data-k="status" placeholder="CNF / WL 12" value="${esc(p.status || "")}" maxlength="20" autocapitalize="characters" aria-label="Status for ${esc(pName(id))}"></div>`; }).join("") || '<span class="muted">Tick who travelled above.</span>';
+  $$("#iPax .paxrow").forEach(r => { r.querySelector("[data-k=berthType]").value = keep[r.dataset.who]?.berthType || ""; });
+}
+function readSms() {
+  const r = parseIrctc($("#smsText").value, TODAY), note = $("#smsNote");
+  if (!r.pnr && !r.train) { note.textContent = "Couldn't find a PNR or train number in that. Paste the whole SMS."; return; }
+  const set = (id, v) => { if (v !== undefined && v !== "") $(id).value = v; };
+  set("#iDate", r.date); set("#iTime", r.time); set("#iFlight", r.train); set("#iPnr", r.pnr); set("#iCls", r.cls); set("#iQuota", r.quota);
+  set("#iFromStn", r.fromStn); set("#iToStn", r.toStn); set("#iFrom", r.from); set("#iTo", r.to);
+  if (r.chart) $("#iChart").checked = true;
+  const pax = r.passengers || [];
+  const all = pax.length && pax.every(p => p.status === "CNF") ? "CNF" : pax[0]?.status || "";
+  set("#iRailStatus", all);
+  // Hand berths to the ticked travellers in order (the owner first), ticking more people if the SMS has more berths.
+  let who = $$("#iWho input:checked").map(i => i.value);
+  const want = Math.max(pax.length, r.party || 0);
+  if (want > who.length) { const extra = PEOPLE.map(p => p.id).filter(id => !who.includes(id)); who = [...who, ...extra].slice(0, want); renderWhoPick(who); }
+  renderPax(Object.fromEntries(who.map((id, i) => [id, pax[i] || {}])));
+  const missing = [!r.from && r.fromStn && `from ${r.fromStn}`, !r.to && r.toStn && `to ${r.toStn}`].filter(Boolean);
+  note.textContent = `Filled from the SMS: PNR ${r.pnr || "?"}, train ${r.train || "?"}${pax.length ? `, ${pax.length} berth${pax.length > 1 ? "s" : ""}` : ""}.` + (missing.length ? ` Pick the city airport for ${missing.join(" and ")}.` : "");
+  formHints();
 }
 function fillFilters() {
   const al = new Map(); flights.forEach(f => f.airline && al.set(f.airline, (al.get(f.airline) || 0) + 1));
@@ -567,7 +704,9 @@ function fillFilters() {
 function formVals() {
   const v = id => $(id).value.trim();
   const mode = v("#iMode") || "air", ground = mode !== "air";
-  return { mode, operator: ground ? v("#iOperator") : "", distanceKm: ground && +v("#iDist") > 0 ? +v("#iDist") : undefined,
+  const rail = mode === "train" ? { trainName: v("#iTrainName"), cls: v("#iCls"), quota: v("#iQuota"), fromStn: v("#iFromStn"), toStn: v("#iToStn"), arr: v("#iArr"), arrDay: v("#iArrDay"),
+    platform: v("#iPlatform"), status: v("#iRailStatus"), chart: $("#iChart").checked, passengers: paxVals() } : undefined;
+  return { mode, operator: ground ? v("#iOperator") : "", distanceKm: ground && +v("#iDist") > 0 ? +v("#iDist") : undefined, pnr: v("#iPnr"), rail,
     date: v("#iDate"), time: v("#iTime"), flight: v("#iFlight").replace(/\s+/g, "").toUpperCase(), from: v("#iFrom").slice(0, 3).toUpperCase(), to: v("#iTo").slice(0, 3).toUpperCase(),
     duration: v("#iDur"), aircraft: v("#iAircraft").toUpperCase(), seat: v("#iSeat").toUpperCase(), seatType: v("#iSeatType"), cabin: v("#iCabin"), reason: v("#iReason"),
     registration: v("#iReg").toUpperCase(), trip: v("#iTrip"), note: v("#iNote"), travellers: $$("#iWho input:checked").map(i => i.value) };
@@ -575,6 +714,10 @@ function formVals() {
 function setFormMode(mode) {
   const ground = mode !== "air", m = MODE_INFO[mode];
   $("#form").classList.toggle("ground", ground);
+  MODES.forEach(x => $("#form").classList.toggle(`mode-${x}`, x === mode));
+  $("#lPnr").textContent = mode === "train" ? "PNR" : mode === "air" ? "PNR / booking ref" : "Booking ref";
+  $("#iPnr").placeholder = mode === "train" ? "10 digits" : "6-character code";
+  if (mode === "train" && !$("#iPax").children.length) renderPax();
   $$("#iModes button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
   $("#iMode").value = mode;
   $("#lFlight").textContent = ground ? (mode === "car" ? "Reference (optional)" : `${m.label} number (optional)`) : "Flight number";
@@ -596,10 +739,14 @@ function formHints() {
   if (prev && !f.from && !f.to && !ui.editing) { $("#iFrom").value = prev.from; $("#iTo").value = prev.to; if (!f.aircraft && prev.aircraft) $("#iAircraft").value = prev.aircraft; if (!f.duration && prev.duration) $("#iDur").value = prev.duration; return formHints(); }
   const km = a && b ? (f.distanceKm || legKm(a, b, f.mode)) : 0;
   $("#hDur").textContent = a && b ? `${ground && !f.distanceKm ? "≈ " : ""}${fmt(km)} km · about ${hm(estDur(km, f.mode))}` : "";
+  const stn = id => { const c = $(id).value.trim().toUpperCase(); return c ? (STATIONS[c] ? `${STATIONS[c][0]} (${STATIONS[c][1]})` : "Station not in Wander's list: pick the city airport above") : ""; };
+  $("#hFromStn").textContent = stn("#iFromStn"); $("#hToStn").textContent = stn("#iToStn");
+  const pnr = $("#iPnr").value.replace(/\s/g, "");
+  $("#hPnr").textContent = f.mode === "train" && pnr && !/^\d{10}$/.test(pnr) ? "An Indian Railways PNR has 10 digits" : "";
   $("#hDist").textContent = ground && a && b && !f.distanceKm ? `Blank: estimated as ${fmt(legKm(a, b, f.mode))} km (straight line + 20%)` : "";
   $("#hAircraft").textContent = f.aircraft ? planeName(REF, f.aircraft) : "";
 }
-function resetForm() { $("#form").reset(); ui.editing = null; $("#formErr").textContent = ""; $("#iDate").value = TODAY; renderWhoPick(defaultWho()); setFormMode("air"); }
+function resetForm() { $("#form").reset(); ui.editing = null; $("#formErr").textContent = ""; $("#iDate").value = TODAY; $("#iPax").innerHTML = ""; $("#smsNote").textContent = "Read on this device. Nothing is sent anywhere, and it works offline."; renderWhoPick(defaultWho()); setFormMode("air"); }
 function loadForm(f) {
   resetForm(); ui.editing = f.id || null;
   if (f.id) { $("#formTitle").textContent = `Edit ${legName(f) || "flight"} · ${f.date}`; $("#saveBtn").textContent = "Save changes"; }
@@ -607,7 +754,11 @@ function loadForm(f) {
   const mode = modeOf(f); set("#iOperator", f.operator); set("#iDist", mode !== "air" && f.distanceKm ? f.distanceKm : "");
   set("#iDate", f.date); set("#iTime", f.time); set("#iFlight", fnPretty(f)); set("#iFrom", f.from); set("#iTo", f.to); set("#iDur", f.duration); set("#iAircraft", f.aircraft); set("#iSeat", f.seat);
   set("#iSeatType", f.seatType); set("#iCabin", f.cabin || "economy"); set("#iReason", f.reason || "leisure"); set("#iReg", f.registration); set("#iTrip", f.trip); set("#iNote", f.note);
+  set("#iPnr", f.pnr); const r = f.rail || {};
+  set("#iTrainName", r.trainName); set("#iCls", r.cls); set("#iQuota", r.quota); set("#iFromStn", r.fromStn); set("#iToStn", r.toStn); set("#iArr", r.arr); $("#iArrDay").value = String(r.arrDay || 0);
+  set("#iPlatform", r.platform); set("#iRailStatus", r.status); $("#iChart").checked = !!r.chart;
   renderWhoPick(Array.isArray(f.travellers) ? f.travellers : defaultWho());
+  renderPax(Object.fromEntries((r.passengers || []).map((p, i) => [p.who || (f.travellers || ["me"])[i], p])));
   setFormMode(mode);
 }
 async function saveForm(e) {
@@ -616,7 +767,7 @@ async function saveForm(e) {
   const btn = $("#saveBtn"); btn.disabled = true;
   try {
     if (ui.editing) { const old = flights.find(x => x.id === ui.editing); await api(`/api/flights/${encodeURIComponent(ui.editing)}`, { method: "PUT", body: JSON.stringify({ ...f, status: old?.status === "cancelled" ? "cancelled" : undefined, reviewed: old?.reviewed }) }); toast("Changes saved"); }
-    else { const doc = await api("/api/flights", { method: "POST", body: JSON.stringify(f) }); ui.sel = doc.id; toast(`${f.from}→${f.to} added`); }
+    else { const doc = await api("/api/flights", { method: "POST", body: JSON.stringify(f) }); ui.sel = doc.id; toast(`${f.rail?.fromStn && f.rail?.toStn ? `${f.rail.fromStn}→${f.rail.toStn}` : `${f.from}→${f.to}`} added`); }
     resetForm(); await reload();
   } catch (e2) { $("#formErr").textContent = e2.message; }
   btn.disabled = false;
@@ -704,7 +855,7 @@ async function replay() {
 
 /* ---------------- routing & wiring ---------------- */
 function go(tab, initial) {
-  if (!["overview", "trips", "insights", "logbook", "review", "add"].includes(tab)) tab = "overview";
+  if (!["overview", "journeys", "trips", "insights", "logbook", "review", "add"].includes(tab)) tab = "overview";
   if (tab === "add" && !me.canWrite) tab = "overview";
   ui.tab = tab; document.body.dataset.tab = tab;
   $$(".nav a").forEach(a => a.toggleAttribute("aria-current", a.dataset.tab === tab)); $$(".nav a[aria-current]").forEach(a => a.setAttribute("aria-current", "page"));
@@ -729,7 +880,7 @@ function wire() {
     try { await api("/api/login", { method: "POST", body: JSON.stringify({ password: $("#pw").value }) }); location.reload(); }
     catch (err) { $("#loginErr").textContent = err.message; }
   });
-  $("#signBtn").onclick = async () => { await api("/api/logout", { method: "POST", body: "{}" }); location.reload(); };
+  $("#signBtn").onclick = async () => { navigator.serviceWorker?.controller?.postMessage("clear"); await api("/api/logout", { method: "POST", body: "{}" }); location.reload(); };
   $("#yAll").onclick = () => setYear("all");
   $("#years").onclick = e => { const b = e.target.closest("[data-y]"); if (b) setYear(ui.year === b.dataset.y ? "all" : b.dataset.y); };
   $("#fAirline").onchange = e => { ui.airline = e.target.value; render(); focusVisible(); };
@@ -796,7 +947,16 @@ function wire() {
     const kb = e.target.closest("[data-kind]"); if (kb) { ui.tripKind = kb.dataset.kind; renderTrips(); return; } const s = e.target.closest("[data-story]"); if (s) { story(s.dataset.story); return; } const t = e.target.closest("[data-trip]"); if (t) selectTrip(t.dataset.trip); };
   $("#p-trips").onkeydown = e => { if (e.key === "Enter") { const t = e.target.closest("[data-trip]"); if (t) selectTrip(t.dataset.trip); } };
   $("#form").addEventListener("submit", saveForm);
-  ["#iFlight", "#iFrom", "#iTo", "#iAircraft", "#iDur", "#iDist"].forEach(id => $(id).addEventListener("input", formHints));
+  ["#iFlight", "#iFrom", "#iTo", "#iAircraft", "#iDur", "#iDist", "#iPnr"].forEach(id => $(id).addEventListener("input", formHints));
+  // A known station code fills in its city's airport, unless one was already chosen.
+  [["#iFromStn", "#iFrom"], ["#iToStn", "#iTo"]].forEach(([stn, apt]) => $(stn).addEventListener("input", () => {
+    const st = STATIONS[$(stn).value.trim().toUpperCase()];
+    if (st && (!$(apt).value || $(apt).dataset.auto === "1")) { $(apt).value = st[1]; $(apt).dataset.auto = "1"; }
+    formHints();
+  }));
+  ["#iFrom", "#iTo"].forEach(id => $(id).addEventListener("input", () => { $(id).dataset.auto = ""; }));
+  $("#iWho").addEventListener("change", () => { if ($("#iMode").value === "train") renderPax(); });
+  $("#smsGo").onclick = readSms;
   $$("#iModes button").forEach(b => (b.onclick = () => setFormMode(b.dataset.mode)));
   $("#resetBtn").onclick = resetForm; $("#lookupBtn").onclick = lookup;
   $("#importBtn").onclick = () => $("#importFile").click();
