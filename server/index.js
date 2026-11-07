@@ -3,6 +3,8 @@ import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
 import { join, extname, normalize as normPath, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGzip } from "node:zlib";
+import { createHash } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { createRef } from "../public/lib/core.js";
 import { openDb } from "./db.js";
 import { createAuth } from "./auth.js";
@@ -18,7 +20,18 @@ const CSP = [
   "img-src 'self' data: blob: https://pics.avs.io https://flagcdn.com", "connect-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'",
 ].join("; ");
 
+/** The build's git commit when the image sets one, else a fingerprint of the app's own files. */
+function appVersion(env) {
+  if (env.WANDER_VERSION && env.WANDER_VERSION !== "dev") return env.WANDER_VERSION.slice(0, 7);
+  const h = createHash("sha1");
+  for (const f of ["index.html", "app.js", "app.css", "globe.js", "sw.js", ...readdirSync(join(PUBLIC, "lib")).map(x => "lib/" + x)]) {
+    try { h.update(readFileSync(join(PUBLIC, f))); } catch { /* missing file: skip */ }
+  }
+  return "files-" + h.digest("hex").slice(0, 7);
+}
+
 export function buildApp(env = process.env) {
+  const version = appVersion(env);
   const ref = createRef(JSON.parse(readFileSync(join(PUBLIC, "data", "ref.json"), "utf8")));
   const db = openDb(env.WANDER_DB || join(ROOT, "data", "wander.db"));
   const aiEnv = { provider: "gemini", apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL || "gemini-flash-latest", smartModel: env.GEMINI_MODEL_SMART || env.GEMINI_MODEL || "gemini-flash-latest" };
@@ -75,7 +88,7 @@ export function buildApp(env = process.env) {
     const needRead = () => { if (!canRead) throw new InputError("Sign in to see this logbook.", 401); };
     const needWrite = () => { if (!canWrite) throw new InputError(who ? "This view is read-only. Sign in to make changes." : "Sign in first.", 401); };
 
-    if (path === "/api/me") return send(res, 200, { who, canRead, canWrite, authEnabled: auth.enabled, features: { ...service.features, visas: who === "owner" } });
+    if (path === "/api/me") return send(res, 200, { who, canRead, canWrite, authEnabled: auth.enabled, version, features: { ...service.features, visas: who === "owner" } });
     if (path === "/api/login" && method === "POST") {
       const { password } = await readJSON(req, 4096);
       const r = auth.tryLogin(req, password);
@@ -154,7 +167,7 @@ export function buildApp(env = process.env) {
   const handler = async (req, res) => {
     const url = new URL(req.url, "http://localhost");
     try {
-      if (url.pathname === "/healthz") return send(res, 200, { ok: true });
+      if (url.pathname === "/healthz") return send(res, 200, { ok: true, version });
       if (url.pathname.startsWith("/api/")) return await api(req, res, url);
       const mm = url.pathname.match(/^\/mcp(?:\/([A-Za-z0-9_\-]{16,200}))?\/?$/);
       if (mm) return await mcp(req, res, mm[1]);

@@ -76,10 +76,10 @@ function offlineBanner(savedAt) {
   if (!b) { b = document.createElement("div"); b.id = "offline"; b.className = "offline"; b.setAttribute("role", "status"); document.body.prepend(b); }
   b.textContent = `Offline: showing what was saved on this device ${new Date(savedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}.`;
 }
-function toast(msg, undo) {
+function toast(msg, undo, label = "Undo", ms = 5200) {
   const t = $("#toast"); t.innerHTML = `<span>${esc(msg)}</span>`;
-  if (undo) { const b = document.createElement("button"); b.textContent = "Undo"; b.onclick = () => { t.hidden = true; undo(); }; t.appendChild(b); }
-  t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 5200);
+  if (undo) { const b = document.createElement("button"); b.textContent = label; b.onclick = () => { t.hidden = true; undo(); }; t.appendChild(b); }
+  t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), ms);
 }
 const ap = c => REF.ap.get(c);
 const flag = (cc, w = 40) => cc ? `<img src="https://flagcdn.com/w80/${esc(cc.toLowerCase())}.png" alt="" width="${w}" loading="lazy" data-fb="flag">` : "";
@@ -159,7 +159,8 @@ async function openAISettings() {
     <p class="muted">With your own SearXNG, links like Live running status, Coach position and Flight status show their results inside Wander instead of opening Google. On the same Docker network it's usually <span class="mono">http://searxng:8080</span>.</p>
     <div class="fields"><div class="field wide"><label for="srUrl">SearXNG address</label><input id="srUrl" value="${esc(ws.url || "")}" placeholder="http://searxng:8080" spellcheck="false"></div></div>
     <p class="err" id="srErr" role="alert"></p><p class="ok-msg" id="srOk" role="status"></p>
-    <div class="row"><button class="btn primary" type="button" id="srSave">Save</button><button class="btn" type="button" id="srTest">Test</button></div></div>`);
+    <div class="row"><button class="btn primary" type="button" id="srSave">Save</button><button class="btn" type="button" id="srTest">Test</button></div>
+    <p class="muted mono small">Wander version ${esc(me.version || "unknown")}</p></div>`);
   const prov = () => $("#aiProv").value;
   const sync = () => {
     const k = prov(), p = P[k], same = k === s.provider;
@@ -227,7 +228,17 @@ const flown = list => list.filter(f => statusOf(f) === "flown");
 /* ---------------- boot ---------------- */
 async function boot() {
   wire();
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { /* offline copy is a bonus */ });
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => { /* offline copy is a bonus */ });
+    // On a slow connection the page may start from the copy saved on this device. When a newer version of the app
+    // finishes downloading behind it, offer to switch, so a deploy never leaves the phone running old code.
+    navigator.serviceWorker.addEventListener("message", e => { if (e.data?.type === "updated") toast("A newer version of Wander has downloaded.", () => location.reload(), "Reload", 60000); });
+  }
+  // Show errors instead of failing silently: a button that does nothing should at least say why.
+  const shown = new Set();
+  const report = msg => { msg = String(msg || "Unknown error").slice(0, 160); if (shown.has(msg)) return; shown.add(msg); toast(`Something went wrong: ${msg}`, () => location.reload(), "Reload", 12000); };
+  window.addEventListener("error", e => { if (e.message) report(e.message); });
+  window.addEventListener("unhandledrejection", e => report(e.reason?.message || e.reason));
   window.addEventListener("online", () => reload().catch(() => {}));
   pullToRefresh();
   // Coming back to the app after a while (switching apps, unlocking the phone) fetches the latest data quietly.

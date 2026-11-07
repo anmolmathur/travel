@@ -8,6 +8,9 @@ WORKDIR /app
 COPY package.json ./
 COPY server ./server
 COPY public ./public
+# The commit this image was built from, shown at /healthz and in AI settings.
+ARG GIT_SHA=dev
+ENV WANDER_VERSION=$GIT_SHA
 RUN mkdir -p /data && chown -R node:node /data
 USER node
 EXPOSE 3000
