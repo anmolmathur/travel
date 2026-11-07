@@ -586,6 +586,7 @@ function visaChips(f) {
 }
 function renderVisas() {
   const el = $("#p-visas");
+  el.onclick = onVisasClick;
   const head = `<div class="sec-head"><h2>Visas <em>· ${VISAS.length}</em></h2><p>What each visa allows, and what's used. Entries and stays come from your logged journeys.</p><button class="btn primary" type="button" data-vadd>📷 Add a visa</button></div>`;
   if (!VISAS.length) {
     el.innerHTML = head + `<div class="empty"><h2>No visas yet</h2><p>Photograph the visa page in your passport and Wander reads the country, dates, entries and stay limit for you to check. Or type them in.</p><p><button class="btn primary" type="button" data-vadd>📷 Photograph a visa</button></p></div>`;
@@ -617,20 +618,21 @@ function renderVisas() {
   };
   el.innerHTML = head + `<div class="jlist">${live.map(card).join("")}</div>` +
     (old.length ? `<details class="vold"><summary>Expired visas (${old.length})</summary><div class="jlist">${old.map(card).join("")}</div></details>` : "");
-  el.onclick = async e => {
-    if (e.target.closest("[data-vadd]")) { openVisaForm(); return; }
-    const rv = e.target.closest("[data-reveal]");
-    if (rv) { const shown = rv.textContent === rv.dataset.reveal; rv.textContent = shown ? maskNo(rv.dataset.reveal) : rv.dataset.reveal; if (!shown) { try { await navigator.clipboard.writeText(rv.dataset.reveal); toast("Shown and copied"); } catch { /* shown is enough */ } } return; }
-    const c = e.target.closest("[data-vid]"), v = c && VISAS.find(x => x.id === c.dataset.vid); if (!v) return;
-    if (e.target.closest("[data-vphoto]")) openModal(`<div class="story"><p class="eyebrow">${esc(pName(v.person))}</p><h2 id="modalTitle">${esc(vPlace(v))} visa</h2><img class="vphoto" src="/api/visas/${esc(v.id)}/photo" alt="Photo of the ${esc(vPlace(v))} visa page"><p class="muted">Kept on your Wander server, and on this device for offline use until you sign out.</p></div>`);
-    if (e.target.closest("[data-vedit]")) openVisaForm(v);
-    const del = e.target.closest("[data-vdel]");
-    if (del) {
-      if (!del.dataset.sure) { del.dataset.sure = "1"; del.textContent = "Tap again to delete"; setTimeout(() => { if (del.isConnected) { delete del.dataset.sure; del.textContent = "Delete"; } }, 4000); return; }
-      try { await api(`/api/visas/${encodeURIComponent(v.id)}`, { method: "DELETE" }); VISAS = VISAS.filter(x => x.id !== v.id); renderVisas(); visaCount(); toast("Visa deleted"); }
-      catch (err) { toast(err.message); }
-    }
-  };
+}
+/** One click handler for the Visas screen, set on every render (the empty screen included). */
+async function onVisasClick(e) {
+  if (e.target.closest("[data-vadd]")) { openVisaForm(); return; }
+  const rv = e.target.closest("[data-reveal]");
+  if (rv) { const shown = rv.textContent === rv.dataset.reveal; rv.textContent = shown ? maskNo(rv.dataset.reveal) : rv.dataset.reveal; if (!shown) { try { await navigator.clipboard.writeText(rv.dataset.reveal); toast("Shown and copied"); } catch { /* shown is enough */ } } return; }
+  const c = e.target.closest("[data-vid]"), v = c && VISAS.find(x => x.id === c.dataset.vid); if (!v) return;
+  if (e.target.closest("[data-vphoto]")) openModal(`<div class="story"><p class="eyebrow">${esc(pName(v.person))}</p><h2 id="modalTitle">${esc(vPlace(v))} visa</h2><img class="vphoto" src="/api/visas/${esc(v.id)}/photo" alt="Photo of the ${esc(vPlace(v))} visa page"><p class="muted">Kept on your Wander server, and on this device for offline use until you sign out.</p></div>`);
+  if (e.target.closest("[data-vedit]")) openVisaForm(v);
+  const del = e.target.closest("[data-vdel]");
+  if (del) {
+    if (!del.dataset.sure) { del.dataset.sure = "1"; del.textContent = "Tap again to delete"; setTimeout(() => { if (del.isConnected) { delete del.dataset.sure; del.textContent = "Delete"; } }, 4000); return; }
+    try { await api(`/api/visas/${encodeURIComponent(v.id)}`, { method: "DELETE" }); VISAS = VISAS.filter(x => x.id !== v.id); renderVisas(); visaCount(); toast("Visa deleted"); }
+    catch (err) { toast(err.message); }
+  }
 }
 /** Add or edit a visa: photograph the page, let the AI fill the form, check it, save. */
 function openVisaForm(v = null) {
@@ -641,8 +643,8 @@ function openVisaForm(v = null) {
   const aiNote = me.features?.ai ? "The photo is sent to your AI provider (set under ⚙ AI) to read the text. Nothing is saved until you press Save." : "AI is off, so fill the fields in yourself. Turn it on under ⚙ AI to read photos.";
   openModal(`<div class="story visa-form"><p class="eyebrow">${v ? "Edit visa" : "New visa"}</p><h2 id="modalTitle">${v ? esc(vPlace(v)) : "Add a visa"}</h2>
     <div class="vcap">
-      <label class="btn primary"><input type="file" id="vCam" accept="image/*" capture="environment" hidden>📷 Take a photo</label>
-      <label class="btn"><input type="file" id="vPick" accept="image/*" hidden>Choose an image</label>
+      <label class="btn primary"><input type="file" id="vCam" class="vfile" accept="image/*" capture="environment">📷 Take a photo</label>
+      <label class="btn"><input type="file" id="vPick" class="vfile" accept="image/*">Choose an image</label>
       ${me.features?.ai ? '<button class="btn" type="button" id="vRead" disabled><span class="spark">✦</span> Read the photo</button>' : ""}
     </div>
     <p class="muted small">Lay the passport flat in good light, with the whole visa in the frame, including the two lines of &lt;&lt;&lt; at the bottom. ${aiNote}</p>
