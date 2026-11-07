@@ -37,10 +37,20 @@ async function networkFirst(req, isData) {
   } catch {
     const hit = await cache.match(key);
     if (!hit) return net.catch(() => Response.error());
-    if (!isData) return hit;
+    if (!isData) {
+      // The saved copy is served now; if the network copy that arrives later is a different version, tell the page.
+      net.then(res => { if (res.ok && res.headers.get("etag") !== hit.headers.get("etag")) notify(); }).catch(() => {});
+      return hit;
+    }
     const headers = new Headers(hit.headers); headers.set("x-wander-offline", "1");
     return new Response(await hit.arrayBuffer(), { status: 200, headers });
   }
+}
+
+let notified = 0;
+async function notify() {
+  if (Date.now() - notified < 30000) return; notified = Date.now();
+  for (const c of await self.clients.matchAll({ type: "window" })) c.postMessage({ type: "updated" });
 }
 
 // Signing out clears the saved copy.

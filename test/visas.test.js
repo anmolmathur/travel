@@ -123,3 +123,15 @@ test("visas over the API: owner only, photo kept apart, people with visas can't 
     assert.equal((await (await as(owner, "/api/visas")).json()).visas.length, 0);
   } finally { srv.close(); }
 });
+
+test("the server says which version it runs, at /healthz and /api/me", async () => {
+  const run = async env => {
+    const { handler } = buildApp({ WANDER_DB: ":memory:", ...env });
+    const srv = createServer(handler); await new Promise(r => srv.listen(0, r));
+    const base = `http://127.0.0.1:${srv.address().port}`;
+    try { return [(await (await fetch(`${base}/healthz`)).json()).version, (await (await fetch(`${base}/api/me`)).json()).version]; } finally { srv.close(); }
+  };
+  assert.deepEqual(await run({ WANDER_VERSION: "496ca8ff45b224f0c92464e0eef08bdb70380010" }), ["496ca8f", "496ca8f"]);
+  const [h] = await run({});
+  assert.match(h, /^files-[0-9a-f]{7}$/);
+});
