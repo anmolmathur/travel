@@ -654,10 +654,13 @@ function openVisaForm(v = null) {
   const aiNote = me.features?.ai ? "The photo is sent to your AI provider (set under ⚙ AI) to read the text. Nothing is saved until you press Save." : "AI is off, so fill the fields in yourself. Turn it on under ⚙ AI to read photos.";
   openModal(`<div class="story visa-form"><p class="eyebrow">${v ? "Edit visa" : "New visa"}</p><h2 id="modalTitle">${v ? esc(vPlace(v)) : "Add a visa"}</h2>
     <div class="vcap">
-      <label class="btn primary"><input type="file" id="vCam" class="vfile" accept="image/*" capture="environment">📷 Take a photo</label>
-      <label class="btn"><input type="file" id="vPick" class="vfile" accept="image/*">Choose an image</label>
+      <button class="btn primary" type="button" id="vCamBtn">📷 Take a photo</button>
+      <button class="btn" type="button" id="vPickBtn">Choose an image</button>
       ${me.features?.ai ? '<button class="btn" type="button" id="vRead" disabled><span class="spark">✦</span> Read the photo</button>' : ""}
+      <input type="file" id="vCam" class="vfile" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+      <input type="file" id="vPick" class="vfile" accept="image/*" tabindex="-1" aria-hidden="true">
     </div>
+    <p class="vstatus" id="vStatus" role="status" hidden></p>
     <p class="muted small">Lay the passport flat in good light, with the whole visa in the frame, including the two lines of &lt;&lt;&lt; at the bottom. ${aiNote}</p>
     <div class="vprev" id="vPrev" hidden><img id="vImg" alt="The visa photo"></div>
     <div id="vChecks"></div>
@@ -682,18 +685,30 @@ function openVisaForm(v = null) {
     ${v?.hasPhoto ? '<label class="check"><input type="checkbox" id="vDrop"> Remove the saved photo</label>' : ""}
     <p class="err" id="vErr" role="alert"></p>
     <div class="row"><button class="btn primary" type="button" id="vSave">Save visa</button></div></div>`);
-  const take = async file => {
-    if (!file || !/^image\//.test(file.type)) { $("#vErr").textContent = "Choose an image file."; return; }
-    $("#vErr").textContent = "";
-    photo = await shrink(file, 2200);
+  // Progress and problems show right under the buttons, where the eye is, not at the foot of a long form.
+  const status = (text, kind = "") => { const el = $("#vStatus"); if (!el) return; el.hidden = !text; el.className = `vstatus ${kind}`; el.textContent = text || ""; };
+  const take = async input => {
+    const file = input.files && input.files[0];
+    input.value = ""; // so choosing the same photo again still fires
+    if (!file) return;
+    // iPhones sometimes report no type for a camera photo; accept anything that looks like an image.
+    if (file.type && !/^image\//.test(file.type)) { status("That file isn't an image. Take a photo or choose a JPEG or PNG.", "bad"); return; }
+    status("Preparing the photo…");
+    try { photo = await shrink(file, 2200); }
+    catch (err) { photo = null; status(err.message || "This photo couldn't be opened. Try again, or choose it from your photos.", "bad"); return; }
     $("#vImg").src = photo; $("#vPrev").hidden = false; $("#vKeepRow").hidden = false;
-    const r = $("#vRead"); if (r) { r.disabled = false; r.focus(); }
+    const r = $("#vRead");
+    if (r) { r.disabled = false; status("Photo ready. Reading it now…"); r.click(); }
+    else status("Photo ready. Fill in the fields below (AI is off, so it can't be read automatically).", "ok");
   };
-  $("#vCam").onchange = e => take(e.target.files[0]);
-  $("#vPick").onchange = e => take(e.target.files[0]);
+  $("#vCam").onchange = e => take(e.target);
+  $("#vPick").onchange = e => take(e.target);
+  $("#vCamBtn").onclick = () => $("#vCam").click();
+  $("#vPickBtn").onclick = () => $("#vPick").click();
   const set = (id, x) => { if (x !== undefined && x !== null && x !== "" && x !== 0) $(id).value = x; };
   if ($("#vRead")) $("#vRead").onclick = async () => {
-    const b = $("#vRead"); b.disabled = true; b.textContent = "Reading the visa…"; $("#vChecks").innerHTML = "";
+    const b = $("#vRead"); if (!photo) { status("Take or choose a photo first.", "bad"); return; }
+    b.disabled = true; b.textContent = "Reading the visa…"; $("#vChecks").innerHTML = ""; status("Reading the visa… this can take up to a minute.");
     try {
       const { visa: r, mrz, checks } = await api("/api/visas/read", { method: "POST", body: JSON.stringify({ image: photo }) });
       const cc = String(r.country || "").toUpperCase(); if ($(`#vCountry option[value="${CSS.escape(cc)}"]`)) $("#vCountry").value = cc;
@@ -701,8 +716,8 @@ function openVisaForm(v = null) {
       set("#vKind", r.kind); set("#vCat", r.category); set("#vStay", Number(r.maxStay) || ""); set("#vIssued", r.issued); set("#vFrom", r.validFrom); set("#vUntil", r.validUntil);
       set("#vNumber", r.number); set("#vIssuedAt", r.issuedAt); set("#vName", r.name); set("#vPassport", r.passportNo); set("#vNotes", r.notes);
       $("#vChecks").innerHTML = `<p class="vwarn info">Read. Check every field against the visa before saving.${mrz?.ok ? " The machine-readable lines passed their check digits." : ""}</p>` + (checks || []).map(c => `<p class="vwarn warn">${esc(c)}</p>`).join("");
-      b.innerHTML = '<span class="spark">✦</span> Read again';
-    } catch (err) { $("#vChecks").innerHTML = `<p class="vwarn bad">${esc(err.message)}</p>`; b.innerHTML = '<span class="spark">✦</span> Try again'; }
+      b.innerHTML = '<span class="spark">✦</span> Read again'; status("Read. Check the fields below, then Save.", "ok");
+    } catch (err) { status(err.message, "bad"); $("#vChecks").innerHTML = ""; b.innerHTML = '<span class="spark">✦</span> Try again'; }
     b.disabled = false;
   };
   $("#vSave").onclick = async () => {
@@ -1045,12 +1060,29 @@ async function lookup() {
 
 /* ---------------- smart add ---------------- */
 let smartImage = null, parsed = [];
+/**
+ * Downscale a photo to a JPEG data URL. Decodes through an <img> first: on iPhones that is the most reliable path
+ * (it handles HEIC and the camera's rotation), then createImageBitmap, then the file as it is.
+ */
 async function shrink(file, max = 1800) {
-  const bmp = await createImageBitmap(file).catch(() => null);
-  if (!bmp) { return new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(file); }); }
-  const s = Math.min(1, max / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
-  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-  return c.toDataURL("image/jpeg", 0.88);
+  const draw = (src, w, h) => {
+    const s = Math.min(1, max / Math.max(w, h)), c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+    c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+    const out = c.toDataURL("image/jpeg", 0.88);
+    if (!out.startsWith("data:image/jpeg")) throw new Error("This phone couldn't convert the photo.");
+    return out;
+  };
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
+    if (img.naturalWidth) return draw(img, img.naturalWidth, img.naturalHeight);
+  } catch { /* try the next way */ } finally { URL.revokeObjectURL(url); }
+  try { const bmp = await createImageBitmap(file); return draw(bmp, bmp.width, bmp.height); } catch { /* try the next way */ }
+  const raw = await new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = () => bad(new Error("This photo couldn't be read. Try again, or choose it from your photos.")); fr.readAsDataURL(file); });
+  if (!/^data:image\//.test(raw)) throw new Error("That file couldn't be opened as an image.");
+  return raw;
 }
 async function smartGo() {
   const text = $("#smartText").value.trim(), st = $("#smartStatus");
@@ -1223,7 +1255,7 @@ function wire() {
     try { const r = await api("/api/import", { method: "POST", body: await f.text(), raw: true, headers: { "content-type": "text/csv" } }); toast(`Imported ${r.added}${r.skipped ? `, skipped ${r.skipped} duplicates` : ""}${r.failed ? `, ${r.failed} couldn't be read` : ""}.`); await reload(); }
     catch (err) { toast(err.message); }
   };
-  const drop = $("#drop"), pick = async f => { if (!f || !/^image\//.test(f.type)) { $("#smartStatus").textContent = "Choose an image file."; return; } smartImage = await shrink(f); drop.classList.add("on"); $("#dropText").textContent = `Image ready: ${f.name}. Click to replace.`; };
+  const drop = $("#drop"), pick = async f => { if (!f || !/^image\//.test(f.type)) { $("#smartStatus").textContent = "Choose an image file."; return; } try { smartImage = await shrink(f); } catch (e) { $("#smartStatus").textContent = e.message; return; } drop.classList.add("on"); $("#dropText").textContent = `Image ready: ${f.name}. Click to replace.`; };
   $("#smartImg").onchange = e => pick(e.target.files[0]);
   drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("on"); });
   drop.addEventListener("dragleave", () => { if (!smartImage) drop.classList.remove("on"); });
