@@ -4,7 +4,7 @@ import {
   validate, DEFUNCT, CABINS, REASONS, MONTHS, todayISO, dayDiff, MODES, MODE_INFO, modeOf, isAir, legName, legKm,
 } from "./lib/core.js";
 import { RAIL_CLASSES, RAIL_QUOTAS, BERTH_TYPES, STATIONS, parseIrctc, statusKind, legLinks } from "./lib/rail.js";
-import { VISA_ZONES, VISA_ENTRIES, VISA_KINDS, visaStatus, visaFor, visaPlace, maskNo, cleanVisa } from "./lib/visa.js";
+import { VISA_ZONES, VISA_ENTRIES, VISA_KINDS, visaStatus, visaFor, visaPlace, maskNo } from "./lib/visa.js";
 import { createGlobe, GROUND_STYLE } from "./globe.js";
 
 const $ = s => document.querySelector(s);
@@ -705,18 +705,26 @@ function openVisaForm(v = null) {
   $("#vPick").onchange = e => take(e.target);
   $("#vCamBtn").onclick = () => $("#vCam").click();
   $("#vPickBtn").onclick = () => $("#vPick").click();
-  const set = (id, x) => { if (x !== undefined && x !== null && x !== "" && x !== 0) $(id).value = x; };
   if ($("#vRead")) $("#vRead").onclick = async () => {
     const b = $("#vRead"); if (!photo) { status("Take or choose a photo first.", "bad"); return; }
     b.disabled = true; b.textContent = "Reading the visa…"; $("#vChecks").innerHTML = ""; status("Reading the visa… this can take up to a minute.");
     try {
       const { visa: r, mrz, checks } = await api("/api/visas/read", { method: "POST", body: JSON.stringify({ image: photo }) });
-      const cc = String(r.country || "").toUpperCase(); if ($(`#vCountry option[value="${CSS.escape(cc)}"]`)) $("#vCountry").value = cc;
-      const ent = cleanVisa({ country: "IN", validUntil: "2999-01-01", entries: r.entries }).visa?.entries; if (ent) $("#vEntries").value = ent;
-      set("#vKind", r.kind); set("#vCat", r.category); set("#vStay", Number(r.maxStay) || ""); set("#vIssued", r.issued); set("#vFrom", r.validFrom); set("#vUntil", r.validUntil);
-      set("#vNumber", r.number); set("#vIssuedAt", r.issuedAt); set("#vName", r.name); set("#vPassport", r.passportNo); set("#vNotes", r.notes);
-      $("#vChecks").innerHTML = `<p class="vwarn info">Read. Check every field against the visa before saving.${mrz?.ok ? " The machine-readable lines passed their check digits." : ""}</p>` + (checks || []).map(c => `<p class="vwarn warn">${esc(c)}</p>`).join("");
-      b.innerHTML = '<span class="spark">✦</span> Read again'; status("Read. Check the fields below, then Save.", "ok");
+      // Fill every field the photo gave (the server has already tidied codes, dates and numbers), and mark them.
+      const FIELDS = { person: "#vPerson", country: "#vCountry", kind: "#vKind", category: "#vCat", entries: "#vEntries", maxStay: "#vStay", issued: "#vIssued", validFrom: "#vFrom",
+        validUntil: "#vUntil", number: "#vNumber", issuedAt: "#vIssuedAt", name: "#vName", passportNo: "#vPassport", passportExpiry: "#vPassExp", notes: "#vNotes" };
+      $$(".visa-form .field.auto").forEach(x => x.classList.toggle("auto", false));
+      let n = 0;
+      for (const [k, sel] of Object.entries(FIELDS)) {
+        const el = $(sel), x = r[k];
+        if (x === undefined || x === null || x === "" || x === 0) continue;
+        if (el.tagName === "SELECT" && !el.querySelector(`option[value="${CSS.escape(String(x))}"]`)) continue;
+        el.value = x; el.closest(".field")?.classList.add("auto"); n++;
+      }
+      const missing = ["country", "validUntil"].filter(k => !r[k]).map(k => ({ country: "the country", validUntil: "the expiry date" })[k]);
+      $("#vChecks").innerHTML = `<p class="vwarn info">Filled ${n} of ${Object.keys(FIELDS).length} fields from the photo (marked ✦). Check each against the visa before saving.${mrz?.ok ? " The machine-readable lines passed their check digits." : ""}</p>` + (checks || []).map(c => `<p class="vwarn warn">${esc(c)}</p>`).join("");
+      status(missing.length ? `Filled ${n} fields. Still needed: ${missing.join(" and ")}.` : `Filled ${n} fields from the photo. Check them, then Save.`, missing.length ? "bad" : "ok");
+      b.innerHTML = '<span class="spark">✦</span> Read again';
     } catch (err) { status(err.message, "bad"); $("#vChecks").innerHTML = ""; b.innerHTML = '<span class="spark">✦</span> Try again'; }
     b.disabled = false;
   };

@@ -166,3 +166,72 @@ export function visaFor(visas, person, cc, day) {
 
 /** "AB1234567" -> "•••••4567": numbers stay hidden on screen until tapped. */
 export const maskNo = s => (s ? (s.length > 4 ? "•".repeat(Math.min(6, s.length - 4)) + s.slice(-4) : s) : "");
+
+/* ---------- tidying what the AI read off a photo ---------- */
+// ISO 3166-1 alpha-3 to alpha-2 (from the iso-codes list), plus the odd codes visas and MRZs use.
+const A3 = Object.fromEntries("ABWAW AFGAF AGOAO AIAAI ALAAX ALBAL ANDAD AREAE ARGAR ARMAM ASMAS ATAAQ ATFTF ATGAG AUSAU AUTAT AZEAZ BDIBI BELBE BENBJ BESBQ BFABF BGDBD BGRBG BHRBH BHSBS BIHBA BLMBL BLRBY BLZBZ BMUBM BOLBO BRABR BRBBB BRNBN BTNBT BVTBV BWABW CAFCF CANCA CCKCC CHECH CHLCL CHNCN CIVCI CMRCM CODCD COGCG COKCK COLCO COMKM CPVCV CRICR CUBCU CUWCW CXRCX CYMKY CYPCY CZECZ DEUDE DJIDJ DMADM DNKDK DOMDO DZADZ ECUEC EGYEG ERIER ESHEH ESPES ESTEE ETHET FINFI FJIFJ FLKFK FRAFR FROFO FSMFM GABGA GBRGB GEOGE GGYGG GHAGH GIBGI GINGN GLPGP GMBGM GNBGW GNQGQ GRCGR GRDGD GRLGL GTMGT GUFGF GUMGU GUYGY HKGHK HMDHM HNDHN HRVHR HTIHT HUNHU IDNID IMNIM INDIN IOTIO IRLIE IRNIR IRQIQ ISLIS ISRIL ITAIT JAMJM JEYJE JORJO JPNJP KAZKZ KENKE KGZKG KHMKH KIRKI KNAKN KORKR KWTKW LAOLA LBNLB LBRLR LBYLY LCALC LIELI LKALK LSOLS LTULT LUXLU LVALV MACMO MAFMF MARMA MCOMC MDAMD MDGMG MDVMV MEXMX MHLMH MKDMK MLIML MLTMT MMRMM MNEME MNGMN MNPMP MOZMZ MRTMR MSRMS MTQMQ MUSMU MWIMW MYSMY MYTYT NAMNA NCLNC NERNE NFKNF NGANG NICNI NIUNU NLDNL NORNO NPLNP NRUNR NZLNZ OMNOM PAKPK PANPA PCNPN PERPE PHLPH PLWPW PNGPG POLPL PRIPR PRKKP PRTPT PRYPY PSEPS PYFPF QATQA REURE ROURO RUSRU RWARW SAUSA SDNSD SENSN SGPSG SGSGS SHNSH SJMSJ SLBSB SLESL SLVSV SMRSM SOMSO SPMPM SRBRS SSDSS STPST SURSR SVKSK SVNSI SWESE SWZSZ SXMSX SYCSC SYRSY TCATC TCDTD TGOTG THATH TJKTJ TKLTK TKMTM TLSTL TONTO TTOTT TUNTN TURTR TUVTV TWNTW TZATZ UGAUG UKRUA UMIUM URYUY USAUS UZBUZ VATVA VCTVC VENVE VGBVG VIRVI VNMVN VUTVU WLFWF WSMWS YEMYE ZAFZA ZMBZM ZWEZW".split(" ").map(x => [x.slice(0, 3), x.slice(3)]));
+Object.assign(A3, { D: "DE", RKS: "XK", GBD: "GB", GBN: "GB", GBO: "GB", GBS: "GB", GBP: "GB", UNK: "XK" });
+const ALIASES = { UK: "GB", "GREAT BRITAIN": "GB", BRITAIN: "GB", ENGLAND: "GB", USA: "US", "U.S.A.": "US", "U.S.": "US", AMERICA: "US", "UNITED STATES OF AMERICA": "US",
+  UAE: "AE", "U.A.E.": "AE", EMIRATES: "AE", KOREA: "KR", "REPUBLIC OF KOREA": "KR", CZECHIA: "CZ", "TÜRKIYE": "TR", TURKIYE: "TR", HOLLAND: "NL", "RUSSIAN FEDERATION": "RU",
+  "VIET NAM": "VN", "HONG KONG": "HK", MACAU: "MO", "PEOPLE'S REPUBLIC OF CHINA": "CN", "SCHENGEN AREA": "SCHENGEN", "SCHENGEN STATES": "SCHENGEN", "ETATS SCHENGEN": "SCHENGEN" };
+const MONTHS = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, SEPT: 9, OCT: 10, NOV: 11, DEC: 12,
+  JANV: 1, FEV: 2, FEVR: 2, MARS: 3, AVR: 4, MAI: 5, JUIN: 6, JUIL: 7, AOUT: 8, SEPTEMBRE: 9, OKT: 10, DEZ: 12, MRZ: 3 };
+
+/** A country as a code Wander knows: alpha-2, alpha-3, a name, or SCHENGEN. "" when it can't tell. */
+export function toCountry(v, names = {}) {
+  const s = String(v ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  if (!s) return "";
+  if (VISA_ZONES[s] || /SCHENGEN/.test(s)) return "SCHENGEN";
+  if (ALIASES[s]) return ALIASES[s];
+  if (/^[A-Z]{2}$/.test(s) && (!Object.keys(names).length || names[s])) return s;
+  if (A3[s]) return A3[s];
+  const hit = Object.entries(names).find(([, n]) => String(Array.isArray(n) ? n[0] : n).toUpperCase() === s);
+  return hit ? hit[0] : "";
+}
+
+/** A date as YYYY-MM-DD from the ways visas print them (day first unless the year leads). "" when unclear. */
+export function toISODate(v) {
+  let s = String(v ?? "").trim().toUpperCase().replace(/[,]/g, " ").replace(/\s+/g, " ");
+  if (!s) return "";
+  const ok = (y, m, d) => { y = Number(y); if (y < 100) y += 2000; m = Number(m); d = Number(d);
+    if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31 && y > 1900 && y < 2200)) return "";
+    const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    return new Date(iso + "T00:00:00Z").getUTCDate() === d ? iso : ""; };
+  let m;
+  if ((m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/))) return ok(m[1], m[2], m[3]);
+  if ((m = s.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2,4})$/))) return ok(m[3], m[2], m[1]);
+  if ((m = s.match(/^(\d{1,2})[-/. ]?([A-Z]{3,9})\.?[-/. ]?(\d{2,4})$/))) { const mo = MONTHS[m[2].slice(0, 4)] || MONTHS[m[2].slice(0, 3)]; if (mo) return ok(m[3], mo, m[1]); }
+  if ((m = s.match(/^([A-Z]{3,9})\.? (\d{1,2}) (\d{4})$/)) && MONTHS[m[1].slice(0, 3)]) return ok(m[3], MONTHS[m[1].slice(0, 3)], m[2]);
+  return "";
+}
+
+/**
+ * Turn what the AI read (and the MRZ, if any) into form values, filling every gap it can: country from a name or
+ * code, dates in any common layout, stay length from "90 DAYS", the holder's name from the MRZ, whose visa it is
+ * from that name, and the passport's expiry from an earlier visa in the same passport. Returns { visa, filled }.
+ */
+export function tidyRead(raw = {}, { mrz = null, names = {}, people = [], visas = [] } = {}) {
+  const r = { ...raw }, out = {};
+  out.country = toCountry(r.country, names) || toCountry(r.validFor, names) || (mrz ? toCountry(mrz.issuer, names) : "");
+  // A uniform (type C) visa valid for the Schengen states is one visa for the whole area.
+  if (out.country && SCHENGEN.includes(out.country) && (/SCHENGEN/i.test(`${r.validFor || ""} ${r.notes || ""}`) || String(r.category || "").trim().toUpperCase() === "C")) out.country = "SCHENGEN";
+  for (const k of ["issued", "validFrom", "validUntil", "passportExpiry"]) out[k] = toISODate(r[k]);
+  if (mrz?.validUntilOk && mrz.validUntil) out.validUntil = mrz.validUntil;
+  if (!out.validFrom && out.issued) out.validFrom = out.issued;
+  const stay = String(r.maxStay ?? "").match(/\d{1,4}/); out.maxStay = stay ? Number(stay[0]) : 0;
+  const e = String(r.entries ?? "").trim().toUpperCase();
+  out.entries = /^(M|MULT)/.test(e) || Number(e) > 2 ? "multiple" : /^(D|2)/.test(e) ? "double" : /^(S|1)/.test(e) ? "single" : "";
+  for (const k of ["kind", "category", "issuedAt", "notes"]) out[k] = String(r[k] ?? "").trim();
+  out.number = String(r.number ?? "").replace(/\s+/g, "").toUpperCase() || (mrz?.numberOk ? mrz.number : "");
+  out.passportNo = String(r.passportNo ?? "").replace(/\s+/g, "").toUpperCase();
+  out.name = String(r.name ?? "").trim() || (mrz ? [mrz.given, mrz.surname].filter(Boolean).join(" ") : "");
+  // Whose visa: the person whose name shares a word with the name on the visa (only when exactly one does).
+  const words = new Set(out.name.toUpperCase().split(/[^A-Z]+/).filter(w => w.length > 1));
+  const who = people.filter(p => String(p.name || "").toUpperCase().split(/[^A-Z]+/).some(w => w.length > 1 && words.has(w)));
+  if (who.length === 1) out.person = who[0].id;
+  // The passport's expiry isn't on a visa, but an earlier visa in the same passport may know it.
+  if (!out.passportExpiry && out.passportNo) out.passportExpiry = visas.find(v => v.passportNo === out.passportNo && v.passportExpiry)?.passportExpiry || "";
+  if (!out.person && out.passportNo) out.person = visas.find(v => v.passportNo === out.passportNo)?.person || "";
+  const visa = Object.fromEntries(Object.entries(out).filter(([, v]) => v !== "" && v !== 0 && v != null));
+  return { visa, filled: Object.keys(visa) };
+}

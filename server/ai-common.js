@@ -85,10 +85,12 @@ Today is ${today}. Return one JSON object:
  "issued":"YYYY-MM-DD date of issue, or empty","validFrom":"YYYY-MM-DD first day of validity, or empty","validUntil":"YYYY-MM-DD last day of validity",
  "maxStay":"maximum days per stay or duration of stay as a whole number, or 0 if not printed",
  "issuedAt":"place / post / embassy of issue, or empty","name":"the holder's name as printed",
- "passportNo":"the passport number printed on the visa, or empty",
+ "passportNo":"the passport number printed on the visa, or empty","passportExpiry":"YYYY-MM-DD passport expiry if printed (e-visas often show it), else empty",
+ "validFor":"the territory the visa is valid for as printed (e.g. ETATS SCHENGEN, ALL COUNTRIES), or empty",
  "mrz":"the two machine-readable lines at the bottom (characters A-Z, 0-9 and <), copied exactly, separated by a newline; empty if none",
  "notes":"anything else printed that matters (annotations, remarks, conditions), max 200 characters"}
-Rules: dates on visas are usually day first (DD-MM-YYYY or 12 MAR 2026); convert carefully. Never guess a value you cannot read: leave it empty.
+Rules: fill every field you can read. Dates on visas are usually day first (DD-MM-YYYY or 12 MAR 2026); convert carefully.
+"Duration of stay" or "No. of days" is maxStay. Never guess a value you cannot read: leave it empty.
 If the image is not a visa, return {"error":"what the image shows instead"}.` }, { inlineData: { mimeType: image.mimeType, data: image.data } }];
       return generate({ parts, temperature: 0 });
     },

@@ -6,7 +6,7 @@ import {
   isAir, modeOf, MODE_INFO,
 } from "../public/lib/core.js";
 import { cleanPnr, cleanRail } from "../public/lib/rail.js";
-import { cleanVisa, visaStatus, parseVisaMrz, VISA_ZONES } from "../public/lib/visa.js";
+import { cleanVisa, visaStatus, parseVisaMrz, tidyRead, VISA_ZONES } from "../public/lib/visa.js";
 import { randomBytes } from "node:crypto";
 import { createAI, PROVIDERS } from "./ai.js";
 import { createSearch } from "./search.js";
@@ -143,15 +143,15 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     const r = Array.isArray(out) ? out[0] || {} : out || {};
     if (r.error) throw new InputError(`That doesn't look like a visa (${String(r.error).slice(0, 120)}). Photograph the visa page itself, flat and in good light.`, 422);
     const mrz = r.mrz ? parseVisaMrz(Array.isArray(r.mrz) ? r.mrz.join("\n") : r.mrz) : null;
-    const fields = { ...r }; delete fields.mrz;
+    const { visa, filled } = tidyRead(r, { mrz, names: ref.countries, people: people(), visas: db.visas.list() });
     const checks = [];
-    // The MRZ carries check digits: when they hold and disagree with what the AI read from the printed text, trust them.
-    if (mrz?.validUntilOk && mrz.validUntil && mrz.validUntil !== fields.validUntil) { checks.push(`Expiry read as ${fields.validUntil || "blank"}; the machine-readable lines say ${mrz.validUntil}, which was used.`); fields.validUntil = mrz.validUntil; }
-    if (mrz?.numberOk && mrz.number && !fields.number) fields.number = mrz.number;
+    // The MRZ carries check digits: when they hold and disagree with the printed expiry the AI read, the MRZ wins.
+    const printed = tidyRead({ validUntil: r.validUntil }).visa.validUntil;
+    if (mrz?.validUntilOk && printed && printed !== mrz.validUntil) checks.push(`Expiry read as ${printed}; the machine-readable lines say ${mrz.validUntil}, which was used.`);
     if (mrz && !mrz.validUntilOk) checks.push("The machine-readable lines didn't pass their check digit, so check the expiry date by eye.");
-    const country = String(fields.country || "").toUpperCase();
-    if (country && !VISA_ZONES[country] && !knownCountries.has(country)) checks.push(`"${country}" isn't a country code Wander knows. Pick the country.`);
-    return { visa: fields, mrz: mrz ? { ok: mrz.validUntilOk && mrz.numberOk, issuer: mrz.issuer, number: mrz.number, validUntil: mrz.validUntil } : null, checks };
+    if (r.country && !visa.country) checks.push(`Couldn't match "${String(r.country).slice(0, 40)}" to a country. Pick it from the list.`);
+    if (!visa.validUntil) checks.push("The expiry date couldn't be read. Enter it from the visa.");
+    return { visa, filled, mrz: mrz ? { ok: mrz.validUntilOk && mrz.numberOk, issuer: mrz.issuer, number: mrz.number, validUntil: mrz.validUntil } : null, checks };
   }
 
   /* ---------- people ---------- */

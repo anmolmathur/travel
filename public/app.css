@@ -514,3 +514,6 @@ body.visas .visa-only{display:inline-flex!important}
 .vcap label.btn{position:relative}
 .vstatus{margin:0 0 12px;font-size:14px;line-height:1.45;padding:9px 12px;border-radius:10px;background:var(--surface-2);color:var(--ink-2)}
 .vstatus.ok{background:rgba(95,214,168,.12);color:var(--good)}.vstatus.bad{background:rgba(255,107,107,.12);color:#FFB3B3}
+.visa-form .field.auto input,.visa-form .field.auto select{border-color:rgba(161,140,255,.7);background:rgba(161,140,255,.08)}
+.visa-form .field.auto label::after{content:" ✦";color:var(--violet)}
+.story .vstatus{font:400 14px/1.45 var(--f-body);margin:0 0 12px}
