@@ -135,3 +135,23 @@ test("the server says which version it runs, at /healthz and /api/me", async () 
   const [h] = await run({});
   assert.match(h, /^files-[0-9a-f]{7}$/);
 });
+
+test("tidyRead: messy AI output becomes form values, gaps filled from the MRZ and earlier visas", async () => {
+  const { tidyRead, toISODate, toCountry } = await import("../public/lib/visa.js");
+  const names = ref.countries;
+  assert.deepEqual(["12 MAR 2026", "12-03-2026", "12/03/26", "2026-03-12", "12MAR2026", "12.03.2026", "MAR 12, 2026"].map(toISODate), Array(7).fill("2026-03-12"));
+  assert.equal(toISODate("12 AVR 2026"), "2026-04-12"); // French: avril
+  assert.equal(toISODate("31 FEB 2026"), ""); assert.equal(toISODate("soon"), "");
+  assert.deepEqual(["JPN", "Japan", "jp", "UK", "U.S.A.", "D", "Etats Schengen", "Narnia"].map(c => toCountry(c, names)), ["JP", "JP", "JP", "GB", "US", "DE", "SCHENGEN", ""]);
+  const people = [{ id: "me", name: "Anmol" }, { id: "kruti", name: "Kruti" }];
+  const earlier = [{ person: "kruti", passportNo: "Z7654321", passportExpiry: "2031-05-01" }];
+  const { visa, filled } = tidyRead({ country: "France", category: "C", entries: "MULT", maxStay: "90 DAYS", issued: "02 JAN 2026", validUntil: "01-01-2027", name: "", passportNo: "z 765 4321", number: "" },
+    { names, people, visas: earlier, mrz: { surname: "GARG", given: "KRUTI", number: "FRA123456", numberOk: true, validUntil: "2027-01-01", validUntilOk: true, issuer: "FRA" } });
+  assert.deepEqual(visa, { country: "SCHENGEN", issued: "2026-01-02", validFrom: "2026-01-02", validUntil: "2027-01-01", maxStay: 90, entries: "multiple", category: "C",
+    number: "FRA123456", passportNo: "Z7654321", name: "KRUTI GARG", person: "kruti", passportExpiry: "2031-05-01" });
+  assert.ok(filled.includes("person") && filled.includes("passportExpiry"));
+  // no country printed: the MRZ issuer (alpha-3) still gives it
+  assert.equal(tidyRead({}, { names, mrz: { issuer: "JPN" } }).visa.country, "JP");
+  // a name shared by nobody, or by two people, picks no one
+  assert.equal(tidyRead({ name: "JOHN DOE" }, { people }).visa.person, undefined);
+});
