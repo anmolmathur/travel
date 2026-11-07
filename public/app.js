@@ -4,6 +4,7 @@ import {
   validate, DEFUNCT, CABINS, REASONS, MONTHS, todayISO, dayDiff, MODES, MODE_INFO, modeOf, isAir, legName, legKm,
 } from "./lib/core.js";
 import { RAIL_CLASSES, RAIL_QUOTAS, BERTH_TYPES, STATIONS, parseIrctc, statusKind, legLinks } from "./lib/rail.js";
+import { VISA_ZONES, VISA_ENTRIES, VISA_KINDS, visaStatus, visaFor, visaPlace, maskNo, cleanVisa } from "./lib/visa.js";
 import { createGlobe, GROUND_STYLE } from "./globe.js";
 
 const $ = s => document.querySelector(s);
@@ -14,6 +15,7 @@ const TODAY = todayISO();
 const INKS = ["#FF6F91", "#7CC4FF", "#F6C667", "#5FD6A8", "#A18CFF", "#FF8A5B"];
 
 let REF, LAND = null, globe, me = { canWrite: false, features: {} };
+let VISAS = [];
 let flights = [], tripData = { trips: [], home: null }, FLAGS = new Map(), GROUPS = [], PEOPLE = [{ id: "me", name: "Me" }];
 const ui = { person: (() => { try { return localStorage.getItem("wander.person") || "me"; } catch { return "me"; } })(), tab: "overview", year: "all", airline: "all", showCancelled: false, q: "", status: "all", sort: "date", dir: -1, limit: 80, sel: null, editing: null, confirmDel: null, trip: null, replaying: false };
 
@@ -136,7 +138,8 @@ function openPeople() {
 /* ---------------- AI settings ---------------- */
 async function openAISettings() {
   let s;
-  try { s = await api("/api/ai/settings"); } catch (e) { toast(e.message); return; }
+  let ws = { url: "" };
+  try { [s, ws] = await Promise.all([api("/api/ai/settings"), api("/api/search/settings").catch(() => ({ url: "" }))]); } catch (e) { toast(e.message); return; }
   const P = s.providers;
   openModal(`<div class="story ai-set"><p class="eyebrow">AI settings</p><h2 id="modalTitle">Model and API key</h2>
     <p class="muted">Smart add, Ask, trip names, year in review and Where next use this. Bring your own key from any provider below; it's stored on this server and never sent to the browser.</p>
@@ -151,7 +154,12 @@ async function openAISettings() {
     <div class="row"><button class="btn" type="button" id="aiLoad">Load models</button><span class="muted" id="aiListNote"></span></div>
     <p class="err" id="aiErr" role="alert"></p><p class="ok-msg" id="aiOk" role="status"></p>
     <div class="row"><button class="btn primary" type="button" id="aiSave">Save</button><button class="btn" type="button" id="aiTest">Test</button>
-      ${s.source === "settings" && s.envKey ? '<button class="btn ghost" type="button" id="aiReset">Use the server’s .env settings</button>' : ""}</div></div>`);
+      ${s.source === "settings" && s.envKey ? '<button class="btn ghost" type="button" id="aiReset">Use the server’s .env settings</button>' : ""}</div>
+    <hr class="sep"><p class="eyebrow">Web search</p><h3>SearXNG</h3>
+    <p class="muted">With your own SearXNG, links like Live running status, Coach position and Flight status show their results inside Wander instead of opening Google. On the same Docker network it's usually <span class="mono">http://searxng:8080</span>.</p>
+    <div class="fields"><div class="field wide"><label for="srUrl">SearXNG address</label><input id="srUrl" value="${esc(ws.url || "")}" placeholder="http://searxng:8080" spellcheck="false"></div></div>
+    <p class="err" id="srErr" role="alert"></p><p class="ok-msg" id="srOk" role="status"></p>
+    <div class="row"><button class="btn primary" type="button" id="srSave">Save</button><button class="btn" type="button" id="srTest">Test</button></div></div>`);
   const prov = () => $("#aiProv").value;
   const sync = () => {
     const k = prov(), p = P[k], same = k === s.provider;
@@ -192,6 +200,19 @@ async function openAISettings() {
     } catch (err) { note(false, err.message); }
     busy(e.target, false, "Test");
   };
+  const srNote = (ok, msg) => { $("#srErr").textContent = ok ? "" : msg; $("#srOk").textContent = ok ? msg : ""; };
+  $("#srTest").onclick = async e => {
+    busy(e.target, true, "Testing…");
+    try { const r = await api("/api/search/test", { method: "POST", body: JSON.stringify({ url: $("#srUrl").value.trim() }) }); srNote(true, `Working: ${r.results.length} results for "${r.query}".`); }
+    catch (err) { srNote(false, err.message); }
+    busy(e.target, false, "Test");
+  };
+  $("#srSave").onclick = async e => {
+    busy(e.target, true);
+    try { ws = await api("/api/search/settings", { method: "PUT", body: JSON.stringify({ url: $("#srUrl").value.trim() }) }); await refreshFeatures(); srNote(true, ws.url ? "Saved. Search links now open inside Wander." : "Saved. Search is off; links open Google."); }
+    catch (err) { srNote(false, err.message); }
+    busy(e.target, false);
+  };
   const rs = $("#aiReset"); if (rs) rs.onclick = async () => { try { s = await api("/api/ai/settings", { method: "PUT", body: JSON.stringify({ reset: true }) }); await refreshFeatures(); $("#modal").hidden = true; toast("Back to the server’s .env settings"); } catch (err) { note(false, err.message); } };
 }
 async function refreshFeatures() {
@@ -220,6 +241,7 @@ async function boot() {
   document.body.classList.toggle("readonly", !me.canWrite);
   document.body.classList.toggle("ai", !!me.features?.ai);
   document.body.classList.toggle("lookup", !!me.features?.lookup);
+  document.body.classList.toggle("visas", !!me.features?.visas);
   $("#signBtn").hidden = !(me.authEnabled && me.who === "owner");
   const [ref, w110, w50] = await Promise.all(["/data/ref.json", "/data/countries-110m.json", "/data/countries-50m.json"].map(u => fetch(u).then(r => r.json())));
   REF = createRef(ref); LAND = topojson.feature(w110, w110.objects.countries).features.map(f => ({ f, b: d3.geoBounds(f) }));
@@ -241,6 +263,7 @@ async function reload() {
   const [{ flights: fs }, { people }] = await Promise.all([api("/api/flights"), api("/api/people")]);
   PEOPLE = people; if (ui.person !== "all" && !PEOPLE.some(p => p.id === ui.person)) ui.person = "me";
   flights = fs; tripData = await api(tripsUrl());
+  if (me.features?.visas) VISAS = (await api("/api/visas").catch(() => ({ visas: VISAS }))).visas;
   fillFilters(); renderPeople(); render();
 }
 
@@ -256,6 +279,8 @@ function render() {
   if (t === "insights") renderInsights();
   if (t === "logbook") renderTable();
   if (t === "review") renderReview();
+  if (t === "visas") renderVisas();
+  visaCount();
 }
 
 function drawGlobeData() {
@@ -457,7 +482,9 @@ function renderJourneys() {
     const kind = statusKind(r.status);
     const pax = (r.passengers || []).map((p, i) => `<div class="jp">${avatar(p.who || whoOf(f)[i] || "me", true)}<span>${esc(pName(p.who || whoOf(f)[i] || "me"))}</span>
       <b class="berth">${esc([p.coach, p.berth].filter(Boolean).join(" · ") || "—")}</b><small>${esc(BERTH_TYPES[p.berthType] || "")}</small>${p.status ? `<span class="chip ${statusKind(p.status)}">${esc(p.status)}</span>` : ""}</div>`).join("");
-    const links = legLinks({ ...f, mode }).map(l => `<a class="btn small${l.official ? "" : " ghost"}" href="${esc(l.href)}" ${/^https?:/.test(l.href) ? 'target="_blank" rel="noopener"' : ""} title="${esc(l.note || (l.official ? "Official Indian Railways site" : ""))}"${l.copy ? ` data-copy="${esc(l.copy)}"` : ""}>${esc(l.label)}</a>`).join("");
+    const links = legLinks({ ...f, mode }).map(l => l.q && me.features?.search
+      ? `<button class="btn small ghost" type="button" data-search="${esc(l.q)}" data-label="${esc(l.label)}">🔎 ${esc(l.label)}</button>`
+      : `<a class="btn small${l.official ? "" : " ghost"}" href="${esc(l.href)}" ${/^https?:/.test(l.href) ? 'target="_blank" rel="noopener"' : ""} title="${esc(l.note || (l.official ? "Official Indian Railways site" : ""))}"${l.copy ? ` data-copy="${esc(l.copy)}"` : ""}>${esc(l.label)}</a>`).join("");
     return `<article class="jcard${nextJourney() === f ? " next" : ""}" data-id="${esc(f.id)}">
       <div class="jtop"><span class="jmode">${head}</span><span class="jwhen">${untilText(f)}</span></div>
       ${r.trainName ? `<h3>${esc(r.trainName)}</h3>` : ""}
@@ -466,6 +493,7 @@ function renderJourneys() {
       <div class="jmeta">${r.status ? `<span class="chip ${kind}">${esc(r.status)}</span>` : ""}${r.cls ? `<span>${esc(r.cls)} · ${esc(RAIL_CLASSES[r.cls])}</span>` : ""}${r.quota && r.quota !== "GN" ? `<span>${esc(RAIL_QUOTAS[r.quota])}</span>` : ""}
         ${train ? `<span>${r.chart ? "Chart prepared" : "Chart not prepared yet"}</span>` : ""}${r.platform ? `<span>Platform <b>${esc(r.platform)}</b></span>` : ""}${!train && f.seat ? `<span>Seat <b>${esc(f.seat)}</b></span>` : ""}
         ${r.updatedAt ? `<span class="muted">updated ${esc(new Date(r.updatedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</span>` : ""}</div>
+      ${visaChips(f)}
       ${f.pnr ? `<div class="jpnr">${train ? "PNR" : "Booking ref"} <b class="mono">${esc(f.pnr)}</b><button class="btn small ghost" type="button" data-copy="${esc(f.pnr)}">Copy</button></div>` : ""}
       ${pax ? `<div class="jpax">${pax}</div>` : ""}
       ${links ? `<div class="jlinks">${links}</div>` : ""}
@@ -480,8 +508,32 @@ function renderJourneys() {
     const card = e.target.closest(".jcard"), f = card && flights.find(x => x.id === card.dataset.id); if (!f) return;
     if (e.target.closest("[data-edit]")) { loadForm(f); go("add"); }
     if (e.target.closest("[data-upd]")) openRailUpdate(f);
+    const sb = e.target.closest("[data-search]");
+    if (sb) openSearch(sb.dataset.search, `${sb.dataset.label} · ${legName(f)}`);
   };
 }
+/** Web search through the server's SearXNG, shown in place; the AI can boil the snippets down to an answer. */
+async function openSearch(q, title) {
+  const google = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+  openModal(`<div class="story search"><p class="eyebrow">Web search</p><h2 id="modalTitle">${esc(title)}</h2><p class="muted mono small">${esc(q)}</p>
+    <div class="digest" id="sAns" hidden></div><div id="sRes"><p class="muted">Searching…</p></div>
+    <div class="row">${me.features?.ai ? '<button class="btn" type="button" id="sAi" disabled><span class="spark">✦</span> Summarise with AI</button>' : ""}<a class="btn ghost" href="${esc(google)}" target="_blank" rel="noopener">Search on Google</a></div></div>`);
+  let found;
+  try { found = await api(`/api/search?q=${encodeURIComponent(q)}`); }
+  catch (e) { if ($("#sRes")) $("#sRes").innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const box = $("#sRes"); if (!box) return; // closed meanwhile
+  box.innerHTML = (found.answers.length ? `<div class="sanswer">${found.answers.map(a => `<p>${esc(a)}</p>`).join("")}</div>` : "") +
+    (found.results.length ? `<ol class="sres">${found.results.map(r => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.title)}</b></a><small>${esc(r.site)}${r.published ? ` · ${esc(r.published.slice(0, 10))}` : ""}</small>${r.snippet ? `<p>${esc(r.snippet)}</p>` : ""}</li>`).join("")}</ol>` : '<p class="muted">No results. Try Google below.</p>');
+  const ai = $("#sAi"); if (!ai || !found.results.length) return;
+  ai.disabled = false;
+  ai.onclick = async () => {
+    ai.disabled = true; ai.textContent = "Reading the results…";
+    const out = $("#sAns");
+    try { const { answer } = await api("/api/ai/digest", { method: "POST", body: JSON.stringify({ question: title, results: found.results }) }); out.hidden = false; out.innerHTML = `<p>${esc(answer)}</p><small>From the search snippets below, which can be out of date. Open a result to check.</small>`; ai.remove(); }
+    catch (e) { out.hidden = false; out.innerHTML = `<p class="err">${esc(e.message)}</p>`; ai.disabled = false; ai.innerHTML = '<span class="spark">✦</span> Try again'; }
+  };
+}
+
 /** Quick update while travelling: booking status, chart, platform and each person's coach and berth. */
 function openRailUpdate(f) {
   const r = f.rail || {}, who = whoOf(f);
@@ -505,6 +557,157 @@ function openRailUpdate(f) {
       const doc = await api(`/api/flights/${encodeURIComponent(f.id)}`, { method: "PATCH", body: JSON.stringify({ rail }) });
       Object.assign(f, doc); $("#modal").hidden = true; renderJourneys(); toast("Ticket updated");
     } catch (e) { $("#uErr").textContent = e.message; }
+  };
+}
+
+/* ---------------- visas: what's in the passport, and what each one still allows ---------------- */
+const ccOfAp = code => ap(code)?.cc;
+const vStatus = v => visaStatus(v, { legs: flights.filter(f => whoOf(f).includes(v.person)), ccOf: ccOfAp, today: TODAY });
+const vPlace = v => visaPlace(v, c => countryName(REF, c));
+const vFlag = v => (VISA_ZONES[v.country] ? '<span class="vflag eu" aria-hidden="true">★</span>' : flag(v.country, 34));
+const STATE = { valid: ["ok", "Valid"], expiring: ["rac", "Expiring soon"], upcoming: ["", "Not valid yet"], expired: ["wl", "Expired"] };
+/** Visas that need a look: expiring soon, or a stay or entry problem. Shown as the count on the tab. */
+function visaCount() {
+  const c = $("#vsCount"); if (!c) return;
+  const n = me.features?.visas ? VISAS.filter(v => { const s = vStatus(v); return s.state === "expiring" || s.warnings.some(w => w.kind === "bad"); }).length : 0;
+  c.hidden = !n; c.textContent = n;
+}
+/** On an upcoming journey into a country, say whether each traveller's visa (if one is saved) covers the date. */
+function visaChips(f) {
+  if (!VISAS.length || statusOf(f) !== "upcoming") return "";
+  const a = ccOfAp(f.from), b = ccOfAp(f.to); if (!a || !b || a === b) return "";
+  const chips = whoOf(f).map(p => {
+    const r = visaFor(VISAS, p, b, f.date); if (!r.has) return "";
+    const who = PEOPLE.length > 1 ? `${esc(pName(p))}: ` : "";
+    return r.visa ? `<span class="chip ok" title="${esc(vPlace(r.visa))} visa valid until ${esc(niceDate(r.visa.validUntil))}">🛂 ${who}visa valid to ${esc(niceDate(r.visa.validUntil))}</span>`
+      : `<span class="chip wl" title="The saved ${esc(vPlace(r.latest))} visa ended ${esc(niceDate(r.latest.validUntil))}">🛂 ${who}no valid visa on this date</span>`;
+  }).join("");
+  return chips ? `<div class="jmeta">${chips}</div>` : "";
+}
+function renderVisas() {
+  const el = $("#p-visas");
+  const head = `<div class="sec-head"><h2>Visas <em>· ${VISAS.length}</em></h2><p>What each visa allows, and what's used. Entries and stays come from your logged journeys.</p><button class="btn primary" type="button" data-vadd>📷 Add a visa</button></div>`;
+  if (!VISAS.length) {
+    el.innerHTML = head + `<div class="empty"><h2>No visas yet</h2><p>Photograph the visa page in your passport and Wander reads the country, dates, entries and stay limit for you to check. Or type them in.</p><p><button class="btn primary" type="button" data-vadd>📷 Photograph a visa</button></p></div>`;
+    return;
+  }
+  const order = { expiring: 0, valid: 1, upcoming: 2, expired: 3 };
+  const rows = VISAS.map(v => ({ v, s: vStatus(v) })).sort((x, y) => order[x.s.state] - order[y.s.state] || x.v.validUntil.localeCompare(y.v.validUntil));
+  const live = rows.filter(r => r.s.state !== "expired"), old = rows.filter(r => r.s.state === "expired");
+  const card = ({ v, s }) => {
+    const [cls, label] = STATE[s.state];
+    const pct = s.span ? Math.round((s.elapsed / s.span) * 100) : 0;
+    const big = s.state === "expired" ? `<b>${esc(niceDate(v.validUntil))}</b><span>expired</span>` : s.state === "upcoming" ? `<b>${esc(niceDate(v.validFrom))}</b><span>valid from</span>` : `<b>${fmt(s.daysLeft)}</b><span>day${s.daysLeft === 1 ? "" : "s"} left</span>`;
+    const entries = s.allowed ? `<span>Entries <b>${s.used} of ${s.allowed}</b> used${s.planned ? ` · ${s.planned} planned` : ""}</span>` : `<span>Entries used <b>${s.used}</b>${s.planned ? ` · ${s.planned} planned` : ""}</span>`;
+    const stays = s.stays.map(x => `<li><span class="mono">${esc(x.in ? niceDate(x.in) : "?")} → ${esc(x.out ? niceDate(x.out) : x.planned ? "?" : "now")}</span><b>${x.days ? `${x.days} d` : ""}</b>${x.over ? '<span class="chip wl">over limit</span>' : ""}${x.planned ? '<span class="chip">planned</span>' : x.open && x.in ? '<span class="chip ok">there now</span>' : ""}</li>`).join("");
+    const warn = s.warnings.map(w => `<p class="vwarn ${w.kind}">${esc(w.text)}</p>`).join("");
+    const sub = [v.kind, v.category, VISA_ENTRIES[v.entries]].filter(Boolean).map(esc).join(" · ");
+    return `<article class="vcard ${s.state}" data-vid="${esc(v.id)}">
+      <div class="vtop">${vFlag(v)}<div class="vname"><h3>${esc(vPlace(v))}</h3><small>${sub || "Visa"}</small></div><span class="vwho">${avatar(v.person, true)}${esc(pName(v.person))}</span></div>
+      <div class="vdays">${big}<span class="chip ${cls}">${label}</span></div>
+      ${v.validFrom ? `<div class="vbar" role="img" aria-label="${pct}% of the validity has passed"><i style="width:${pct}%"></i></div>` : ""}
+      <p class="vdates mono">${v.validFrom ? `${esc(niceDate(v.validFrom))} → ` : "until "}${esc(niceDate(v.validUntil))}</p>
+      <div class="jmeta">${entries}${v.maxStay ? `<span>Stay up to <b>${v.maxStay} days</b> per visit</span>` : ""}${s.days180 !== null ? `<span>Schengen days in last 180: <b>${s.days180} / 90</b></span>` : ""}</div>
+      ${warn}
+      ${stays ? `<details class="vstays"><summary>Visits on this visa (${s.stays.length})</summary><ul>${stays}</ul></details>` : ""}
+      ${v.number || v.passportNo ? `<div class="vnums">${v.number ? `<span>Visa no. <button type="button" class="reveal mono" data-reveal="${esc(v.number)}">${esc(maskNo(v.number))}</button></span>` : ""}${v.passportNo ? `<span>Passport <button type="button" class="reveal mono" data-reveal="${esc(v.passportNo)}">${esc(maskNo(v.passportNo))}</button></span>` : ""}</div>` : ""}
+      ${v.notes ? `<p class="muted vnotes">${esc(v.notes)}</p>` : ""}
+      <div class="row">${v.hasPhoto ? '<button class="btn small" type="button" data-vphoto>View visa page</button>' : ""}<button class="btn small ghost" type="button" data-vedit>Edit</button><button class="btn small ghost danger" type="button" data-vdel>Delete</button></div>
+    </article>`;
+  };
+  el.innerHTML = head + `<div class="jlist">${live.map(card).join("")}</div>` +
+    (old.length ? `<details class="vold"><summary>Expired visas (${old.length})</summary><div class="jlist">${old.map(card).join("")}</div></details>` : "");
+  el.onclick = async e => {
+    if (e.target.closest("[data-vadd]")) { openVisaForm(); return; }
+    const rv = e.target.closest("[data-reveal]");
+    if (rv) { const shown = rv.textContent === rv.dataset.reveal; rv.textContent = shown ? maskNo(rv.dataset.reveal) : rv.dataset.reveal; if (!shown) { try { await navigator.clipboard.writeText(rv.dataset.reveal); toast("Shown and copied"); } catch { /* shown is enough */ } } return; }
+    const c = e.target.closest("[data-vid]"), v = c && VISAS.find(x => x.id === c.dataset.vid); if (!v) return;
+    if (e.target.closest("[data-vphoto]")) openModal(`<div class="story"><p class="eyebrow">${esc(pName(v.person))}</p><h2 id="modalTitle">${esc(vPlace(v))} visa</h2><img class="vphoto" src="/api/visas/${esc(v.id)}/photo" alt="Photo of the ${esc(vPlace(v))} visa page"><p class="muted">Kept on your Wander server, and on this device for offline use until you sign out.</p></div>`);
+    if (e.target.closest("[data-vedit]")) openVisaForm(v);
+    const del = e.target.closest("[data-vdel]");
+    if (del) {
+      if (!del.dataset.sure) { del.dataset.sure = "1"; del.textContent = "Tap again to delete"; setTimeout(() => { if (del.isConnected) { delete del.dataset.sure; del.textContent = "Delete"; } }, 4000); return; }
+      try { await api(`/api/visas/${encodeURIComponent(v.id)}`, { method: "DELETE" }); VISAS = VISAS.filter(x => x.id !== v.id); renderVisas(); visaCount(); toast("Visa deleted"); }
+      catch (err) { toast(err.message); }
+    }
+  };
+}
+/** Add or edit a visa: photograph the page, let the AI fill the form, check it, save. */
+function openVisaForm(v = null) {
+  let photo = null; // a new photo (data URL) to save, if any
+  const val = k => esc(v?.[k] ?? "");
+  const countries = Object.entries(REF.countries).map(([c, [n]]) => [c, n]).sort((a, b) => a[1].localeCompare(b[1]));
+  const opts = sel => `<option value="">Choose…</option>${Object.entries(VISA_ZONES).map(([c, z]) => `<option value="${c}"${sel === c ? " selected" : ""}>${esc(z.name)}</option>`).join("")}<option disabled>──────────</option>${countries.map(([c, n]) => `<option value="${c}"${sel === c ? " selected" : ""}>${esc(n)}</option>`).join("")}`;
+  const aiNote = me.features?.ai ? "The photo is sent to your AI provider (set under ⚙ AI) to read the text. Nothing is saved until you press Save." : "AI is off, so fill the fields in yourself. Turn it on under ⚙ AI to read photos.";
+  openModal(`<div class="story visa-form"><p class="eyebrow">${v ? "Edit visa" : "New visa"}</p><h2 id="modalTitle">${v ? esc(vPlace(v)) : "Add a visa"}</h2>
+    <div class="vcap">
+      <label class="btn primary"><input type="file" id="vCam" accept="image/*" capture="environment" hidden>📷 Take a photo</label>
+      <label class="btn"><input type="file" id="vPick" accept="image/*" hidden>Choose an image</label>
+      ${me.features?.ai ? '<button class="btn" type="button" id="vRead" disabled><span class="spark">✦</span> Read the photo</button>' : ""}
+    </div>
+    <p class="muted small">Lay the passport flat in good light, with the whole visa in the frame, including the two lines of &lt;&lt;&lt; at the bottom. ${aiNote}</p>
+    <div class="vprev" id="vPrev" hidden><img id="vImg" alt="The visa photo"></div>
+    <div id="vChecks"></div>
+    <div class="fields">
+      <div class="field"><label for="vPerson">Whose visa</label><select id="vPerson">${PEOPLE.map(p => `<option value="${esc(p.id)}"${(v?.person || defaultWho()[0]) === p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
+      <div class="field"><label for="vCountry">Country</label><select id="vCountry">${opts(v?.country || "")}</select></div>
+      <div class="field"><label for="vKind">Type</label><input id="vKind" list="vKinds" value="${val("kind")}" placeholder="Tourist"><datalist id="vKinds">${VISA_KINDS.map(k => `<option value="${esc(k)}">`).join("")}</datalist></div>
+      <div class="field"><label for="vCat">Class / category</label><input id="vCat" value="${val("category")}" placeholder="B1/B2, C, Standard Visitor" maxlength="40"></div>
+      <div class="field"><label for="vEntries">Entries</label><select id="vEntries"><option value="">Not stated</option>${Object.entries(VISA_ENTRIES).map(([k, n]) => `<option value="${k}"${v?.entries === k ? " selected" : ""}>${n}</option>`).join("")}</select></div>
+      <div class="field"><label for="vStay">Stay per visit (days)</label><input id="vStay" inputmode="numeric" value="${v?.maxStay || ""}" placeholder="e.g. 90"></div>
+      <div class="field"><label for="vIssued">Issued</label><input type="date" id="vIssued" value="${val("issued")}"></div>
+      <div class="field"><label for="vFrom">Valid from</label><input type="date" id="vFrom" value="${val("validFrom")}"></div>
+      <div class="field"><label for="vUntil">Valid until</label><input type="date" id="vUntil" value="${val("validUntil")}" required></div>
+      <div class="field"><label for="vNumber">Visa number</label><input id="vNumber" value="${val("number")}" autocapitalize="characters" spellcheck="false" maxlength="30"></div>
+      <div class="field"><label for="vIssuedAt">Issued at</label><input id="vIssuedAt" value="${val("issuedAt")}" placeholder="Mumbai" maxlength="60"></div>
+      <div class="field"><label for="vName">Name on visa</label><input id="vName" value="${val("name")}" maxlength="80"></div>
+      <div class="field"><label for="vPassport">Passport number</label><input id="vPassport" value="${val("passportNo")}" autocapitalize="characters" spellcheck="false" maxlength="20"></div>
+      <div class="field"><label for="vPassExp">Passport expires</label><input type="date" id="vPassExp" value="${val("passportExpiry")}"></div>
+      <div class="field wide"><label for="vNotes">Notes</label><input id="vNotes" value="${val("notes")}" maxlength="500" placeholder="Annotations, conditions"></div>
+    </div>
+    <label class="check" id="vKeepRow" hidden><input type="checkbox" id="vKeep" checked> Keep this photo with the visa in Wander</label>
+    ${v?.hasPhoto ? '<label class="check"><input type="checkbox" id="vDrop"> Remove the saved photo</label>' : ""}
+    <p class="err" id="vErr" role="alert"></p>
+    <div class="row"><button class="btn primary" type="button" id="vSave">Save visa</button></div></div>`);
+  const take = async file => {
+    if (!file || !/^image\//.test(file.type)) { $("#vErr").textContent = "Choose an image file."; return; }
+    $("#vErr").textContent = "";
+    photo = await shrink(file, 2200);
+    $("#vImg").src = photo; $("#vPrev").hidden = false; $("#vKeepRow").hidden = false;
+    const r = $("#vRead"); if (r) { r.disabled = false; r.focus(); }
+  };
+  $("#vCam").onchange = e => take(e.target.files[0]);
+  $("#vPick").onchange = e => take(e.target.files[0]);
+  const set = (id, x) => { if (x !== undefined && x !== null && x !== "" && x !== 0) $(id).value = x; };
+  if ($("#vRead")) $("#vRead").onclick = async () => {
+    const b = $("#vRead"); b.disabled = true; b.textContent = "Reading the visa…"; $("#vChecks").innerHTML = "";
+    try {
+      const { visa: r, mrz, checks } = await api("/api/visas/read", { method: "POST", body: JSON.stringify({ image: photo }) });
+      const cc = String(r.country || "").toUpperCase(); if ($(`#vCountry option[value="${CSS.escape(cc)}"]`)) $("#vCountry").value = cc;
+      const ent = cleanVisa({ country: "IN", validUntil: "2999-01-01", entries: r.entries }).visa?.entries; if (ent) $("#vEntries").value = ent;
+      set("#vKind", r.kind); set("#vCat", r.category); set("#vStay", Number(r.maxStay) || ""); set("#vIssued", r.issued); set("#vFrom", r.validFrom); set("#vUntil", r.validUntil);
+      set("#vNumber", r.number); set("#vIssuedAt", r.issuedAt); set("#vName", r.name); set("#vPassport", r.passportNo); set("#vNotes", r.notes);
+      $("#vChecks").innerHTML = `<p class="vwarn info">Read. Check every field against the visa before saving.${mrz?.ok ? " The machine-readable lines passed their check digits." : ""}</p>` + (checks || []).map(c => `<p class="vwarn warn">${esc(c)}</p>`).join("");
+      b.innerHTML = '<span class="spark">✦</span> Read again';
+    } catch (err) { $("#vChecks").innerHTML = `<p class="vwarn bad">${esc(err.message)}</p>`; b.innerHTML = '<span class="spark">✦</span> Try again'; }
+    b.disabled = false;
+  };
+  $("#vSave").onclick = async () => {
+    const body = {
+      person: $("#vPerson").value, country: $("#vCountry").value, kind: $("#vKind").value, category: $("#vCat").value, entries: $("#vEntries").value,
+      maxStay: $("#vStay").value, issued: $("#vIssued").value, validFrom: $("#vFrom").value, validUntil: $("#vUntil").value, number: $("#vNumber").value,
+      issuedAt: $("#vIssuedAt").value, name: $("#vName").value, passportNo: $("#vPassport").value, passportExpiry: $("#vPassExp").value, notes: $("#vNotes").value,
+    };
+    if (photo && $("#vKeep").checked) {
+      if (!/^data:image\/(jpeg|png|webp);/.test(photo)) { $("#vErr").textContent = "This photo's format can't be stored. Untick “Keep this photo”, or choose a JPEG."; return; }
+      body.photo = photo;
+    } else if ($("#vDrop")?.checked) body.photo = null;
+    const b = $("#vSave"); b.disabled = true;
+    try {
+      const saved = await api(v ? `/api/visas/${encodeURIComponent(v.id)}` : "/api/visas", { method: v ? "PUT" : "POST", body: JSON.stringify(body) });
+      VISAS = [...VISAS.filter(x => x.id !== saved.id), saved];
+      $("#modal").hidden = true; if (ui.tab !== "visas") go("visas"); else renderVisas(); visaCount(); toast(v ? "Visa updated" : "Visa saved");
+    } catch (err) { $("#vErr").textContent = err.message; b.disabled = false; }
   };
 }
 
@@ -829,10 +1032,10 @@ async function lookup() {
 
 /* ---------------- smart add ---------------- */
 let smartImage = null, parsed = [];
-async function shrink(file) {
+async function shrink(file, max = 1800) {
   const bmp = await createImageBitmap(file).catch(() => null);
   if (!bmp) { return new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(file); }); }
-  const s = Math.min(1, 1800 / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height)), c = document.createElement("canvas");
   c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s); c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
   return c.toDataURL("image/jpeg", 0.88);
 }
@@ -897,8 +1100,8 @@ async function replay() {
 
 /* ---------------- routing & wiring ---------------- */
 function go(tab, initial) {
-  if (!["overview", "journeys", "trips", "insights", "logbook", "review", "add"].includes(tab)) tab = "overview";
-  if (tab === "add" && !me.canWrite) tab = "overview";
+  if (!["overview", "journeys", "trips", "insights", "logbook", "visas", "review", "add"].includes(tab)) tab = "overview";
+  if ((tab === "add" && !me.canWrite) || (tab === "visas" && !me.features?.visas)) tab = "overview";
   ui.tab = tab; document.body.dataset.tab = tab;
   $$(".nav a").forEach(a => a.toggleAttribute("aria-current", a.dataset.tab === tab)); $$(".nav a[aria-current]").forEach(a => a.setAttribute("aria-current", "page"));
   $$(".panel").forEach(p => (p.hidden = p.id !== "p-" + tab));

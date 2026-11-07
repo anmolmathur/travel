@@ -1,10 +1,11 @@
 // Wander service worker: keeps the app and your latest logbook on this device, so tickets open on a train or a
 // plane with no signal. Network first (deploys still apply at once), but a slow network falls back to the saved copy.
 const CACHE = "wander-v1";
-const SHELL = ["/", "/app.js", "/app.css", "/globe.js", "/lib/core.js", "/lib/rail.js", "/vendor/d3.min.js", "/vendor/topojson-client.min.js",
+const SHELL = ["/", "/app.js", "/app.css", "/globe.js", "/lib/core.js", "/lib/rail.js", "/lib/visa.js", "/vendor/d3.min.js", "/vendor/topojson-client.min.js",
   "/data/ref.json", "/data/countries-110m.json", "/data/countries-50m.json", "/favicon.svg", "/manifest.webmanifest"];
-// Data worth having offline. AI, lookups, exports and every write stay network-only.
-const DATA = /^\/api\/(me|flights|people|trips)$/;
+// Data worth having offline, visas and their photos included (for the immigration desk). AI, lookups, exports and
+// every write stay network-only. Signing out deletes all of it from the device.
+const DATA = /^\/api\/(me|flights|people|trips|visas|visas\/v_[a-f0-9]{12}\/photo)$/;
 
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {

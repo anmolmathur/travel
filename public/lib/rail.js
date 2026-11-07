@@ -108,23 +108,31 @@ export function parseIrctc(text, today = new Date().toISOString().slice(0, 10)) 
   return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && !v.length)));
 }
 
-/** Quick links for a leg. None needs an API key; the official ones are marked. */
+/**
+ * Quick links for a leg. None needs an API key; the official ones are marked. Links with a `q` are web searches:
+ * with SearXNG configured the app shows their results in place, otherwise `href` opens the same search on Google.
+ * Search words never include the PNR or anyone's name.
+ */
 export function legLinks(f) {
   const g = q => `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+  const s = (label, q) => ({ label, q, href: g(q) });
   if (f.mode === "train") {
     const train = (f.flight || "").replace(/\D/g, "").slice(0, 5), pnr = f.pnr;
     return [
       pnr && { label: "PNR status", href: "https://www.indianrail.gov.in/enquiry/PNR/PnrEnquiry.html?locale=en", official: true, copy: pnr },
       pnr && { label: "SMS PNR to 139", href: `sms:139?&body=${encodeURIComponent(`PNR ${pnr}`)}`, note: "works without data" },
-      train && { label: "Live running status", href: g(`${train} train live running status`) },
+      train && s("Live running status", `${train} train live running status`),
+      train && f.rail?.fromStn && s("Platform", `${train} train platform number at ${f.rail.fromStn}`),
       { label: "NTES (official)", href: "https://enquiry.indianrail.gov.in/mntes/", official: true },
-      train && { label: "Coach position", href: g(`${train} coach position`) },
+      train && s("Coach position", `${train} coach position`),
+      train && s("Timetable", `${train} train time table route`),
       { label: "Call 139", href: "tel:139", note: "Rail enquiry & help" },
     ].filter(Boolean);
   }
   if (f.mode === "air" || !f.mode) {
     const fl = (f.flight || "").toUpperCase();
-    return [fl && { label: "Flight status", href: g(`${fl.slice(0, 2)} ${fl.slice(2)} flight status`) }].filter(Boolean);
+    const name = `${fl.slice(0, 2)} ${fl.slice(2)}`;
+    return [fl && s("Flight status", `${name} flight status`), fl && s("Gate & terminal", `${name} flight ${f.date || ""} terminal gate`)].filter(Boolean);
   }
   return [];
 }

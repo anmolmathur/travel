@@ -73,6 +73,36 @@ ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
       return asArray(await generate({ parts, temperature: 0.1 }));
     },
 
+    /** Read the details off a photographed visa page (sticker, stamp or printed e-visa). */
+    async visa({ image, today, zones = [] }) {
+      const parts = [{ text: `You read a photographed visa from a passport page, or a printed e-visa, and copy its details exactly.
+Today is ${today}. Return one JSON object:
+{"country":"ISO 3166-1 alpha-2 code of the country the visa lets you enter${zones.length ? `, or ${zones.join(" / ")} for a Schengen (uniform) visa` : ""}",
+ "kind":"Tourist|Business|Visit|Transit|Student|Work|Employment|Conference|Medical|Residence|e-Visa|Visa on arrival|Other",
+ "category":"the visa class or type code as printed, e.g. B1/B2, C, Standard Visitor, or empty",
+ "entries":"single|double|multiple (MULT, M or a number over 2 means multiple)",
+ "number":"the visa or foil/control number as printed, or empty",
+ "issued":"YYYY-MM-DD date of issue, or empty","validFrom":"YYYY-MM-DD first day of validity, or empty","validUntil":"YYYY-MM-DD last day of validity",
+ "maxStay":"maximum days per stay or duration of stay as a whole number, or 0 if not printed",
+ "issuedAt":"place / post / embassy of issue, or empty","name":"the holder's name as printed",
+ "passportNo":"the passport number printed on the visa, or empty",
+ "mrz":"the two machine-readable lines at the bottom (characters A-Z, 0-9 and <), copied exactly, separated by a newline; empty if none",
+ "notes":"anything else printed that matters (annotations, remarks, conditions), max 200 characters"}
+Rules: dates on visas are usually day first (DD-MM-YYYY or 12 MAR 2026); convert carefully. Never guess a value you cannot read: leave it empty.
+If the image is not a visa, return {"error":"what the image shows instead"}.` }, { inlineData: { mimeType: image.mimeType, data: image.data } }];
+      return generate({ parts, temperature: 0 });
+    },
+
+    /** A short answer from web-search snippets (e.g. a train's running status), with sources. */
+    async digest({ question, results, now }) {
+      const text = await generate({
+        json: false, temperature: 0.1,
+        system: "You read web search result snippets for a traveller and answer their question in one to three short sentences. Use only what the snippets say; never guess. Name the site(s) you relied on in brackets. If the snippets show a time, say how old the information is. If the snippets don't answer the question, say so plainly and suggest opening the most relevant result.",
+        parts: [{ text: `Now: ${now}\nQUESTION: ${question}\n\nSEARCH RESULTS:\n${results.map((r, i) => `${i + 1}. [${r.site}] ${r.title}${r.published ? ` (${r.published})` : ""}\n${r.snippet}`).join("\n")}` }],
+      });
+      return String(text).trim();
+    },
+
     /** Answer a free-form question about the logbook. */
     async ask({ question, table, summary, today }) {
       const text = await generate({

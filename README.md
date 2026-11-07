@@ -14,7 +14,11 @@ It is a single Node.js process with a built-in SQLite database and no npm depend
 
 **Journeys (for use on the way).** Your next trains and flights as tickets built for a phone: a countdown, the PNR or booking reference with a Copy button, each person's coach and berth, colour-coded booking status (CNF, RAC, WL), chart and platform, and one-tap links: the official PNR enquiry and NTES pages, SMS "PNR …" to 139 (works without mobile data), live running status, coach position, call 139, and flight status for flights. **Update status** records a new status, the chart, the platform and berths in a few taps. When something leaves within a day or is under way, the app opens straight to Journeys.
 
+**Web search in place (SearXNG).** Point Wander at your own [SearXNG](https://docs.searxng.org/) (⚙ AI settings → Web search, or `SEARXNG_URL` in `.env`; on the same Docker network it's usually `http://searxng:8080`, and JSON must be enabled in its `search.formats`). Live running status, Platform, Coach position, Timetable, Flight status and Gate & terminal then show their results inside the app, and **Summarise with AI** reads just those snippets and answers in a sentence, naming its sources. Search words never include a PNR or a name. Without SearXNG these links open Google.
+
 **Train tickets (Indian Railways).** Train legs keep the PNR, train name, class, quota, station codes, arrival time, platform, booking status, chart and a coach/berth/status row for each traveller. Paste the IRCTC booking or chart SMS into the Add form to fill it in; this runs on your device, with no AI and no network. About 100 major stations map to their city's airport for the map; others ask you to pick the city.
+
+**Visas.** Keep every visa in the family's passports, with a status for each one. Tap **📷 Add a visa**, photograph the visa page (the phone camera opens directly), and the AI reads the country, type, class, entries, dates, stay limit, visa and passport numbers into a form you check before saving. The two machine-readable lines at the bottom of a visa carry check digits; when they pass, Wander trusts them over a misread printed date. Each visa card shows the days left (amber within 60 days), entries used against single or double entry, each visit and its length against the stay limit, and for a Schengen visa (one visa for the whole area) the days spent in the area in the last 180. Visits come from your logged flights and ground legs, so trips inside the country or between Schengen members don't count as new entries. Warnings show for a stay over the limit, more trips planned than the visa allows, a trip after it expires, or a passport that expires before the visa or within six months. Upcoming journeys show whether each traveller's saved visa covers that date. Numbers stay masked until tapped. The photo is optional, is stored apart from the other data on your server, and opens from the card; visas and photos are also kept on the device for offline use (at an immigration desk) until you sign out. Visas are for the signed-in owner only: public viewers and the agent API token can't see them. Reading a photo sends it to the AI provider you configured; typing the details in needs no AI.
 
 **Offline.** A service worker keeps the app and your latest logbook on the device. On a slow or missing connection it shows the saved copy with an "Offline" note, and tells you when a change couldn't be saved. Signing out clears it. Added to the home screen, Wander refreshes when you pull down from the top, and quietly fetches the latest data when you come back to it after a minute or more.
 
@@ -131,6 +135,9 @@ Send `Authorization: Bearer <WANDER_API_TOKEN>`, or sign in for a session cookie
 | GET | `/api/stats?year=` · `/api/trips` · `/api/review` | Summaries |
 | GET | `/api/lookup?flight=&date=` | AeroDataBox lookup |
 | POST | `/api/ai/extract` · `/api/ai/ask` · `/api/ai/story` · `/api/ai/trips` · `/api/ai/next` | Gemini features |
+| GET / POST | `/api/visas` | Visas with their status; add one (`country`, `validUntil` required; optional `photo` data URL). Owner session only |
+| PUT / DELETE | `/api/visas/:id` | Change (`"photo": null` removes the photo) or delete. GET `/api/visas/:id/photo` returns the photo |
+| POST | `/api/visas/read` | `{ "image": dataURL }` → fields read from a visa photo, not saved |
 
 ## Configuration
 

@@ -23,7 +23,7 @@ export function buildApp(env = process.env) {
   const db = openDb(env.WANDER_DB || join(ROOT, "data", "wander.db"));
   const aiEnv = { provider: "gemini", apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL || "gemini-flash-latest", smartModel: env.GEMINI_MODEL_SMART || env.GEMINI_MODEL || "gemini-flash-latest" };
   const lookupProvider = createAeroDataBox({ apiKey: env.AERODATABOX_API_KEY });
-  const service = createService({ db, ref, aiEnv, lookupProvider, defaultPeople: env.WANDER_PEOPLE || "" });
+  const service = createService({ db, ref, aiEnv, searchEnv: env.SEARXNG_URL || "", lookupProvider, defaultPeople: env.WANDER_PEOPLE || "" });
   const auth = createAuth({
     password: env.WANDER_PASSWORD, apiToken: env.WANDER_API_TOKEN, secret: env.SESSION_SECRET,
     publicRead: env.PUBLIC_READ === "true", secureCookie: env.COOKIE_SECURE !== "false",
@@ -75,7 +75,7 @@ export function buildApp(env = process.env) {
     const needRead = () => { if (!canRead) throw new InputError("Sign in to see this logbook.", 401); };
     const needWrite = () => { if (!canWrite) throw new InputError(who ? "This view is read-only. Sign in to make changes." : "Sign in first.", 401); };
 
-    if (path === "/api/me") return send(res, 200, { who, canRead, canWrite, authEnabled: auth.enabled, features: service.features });
+    if (path === "/api/me") return send(res, 200, { who, canRead, canWrite, authEnabled: auth.enabled, features: { ...service.features, visas: who === "owner" } });
     if (path === "/api/login" && method === "POST") {
       const { password } = await readJSON(req, 4096);
       const r = auth.tryLogin(req, password);
@@ -110,6 +110,24 @@ export function buildApp(env = process.env) {
     if (path === "/api/ai/settings" && method === "GET") { needOwner(); return send(res, 200, service.aiSettings()); }
     if (path === "/api/ai/settings" && method === "PUT") { needOwner(); return send(res, 200, service.setAISettings(await readJSON(req, 8192))); }
     if (path === "/api/ai/models" && method === "POST") { needOwner(); return send(res, 200, await service.aiModels(await readJSON(req, 8192))); }
+    // Visas hold passport details: the signed-in owner only. Not agents (MCP), not public viewers.
+    const needVisaOwner = () => { if (who !== "owner") throw new InputError("Only the owner can see visas. Sign in first.", 401); };
+    const vm = path.match(/^\/api\/visas\/(v_[a-f0-9]{12})(\/photo)?$/);
+    if (path === "/api/visas" && method === "GET") { needVisaOwner(); return send(res, 200, { visas: service.visas() }); }
+    if (path === "/api/visas" && method === "POST") { needVisaOwner(); return send(res, 201, service.createVisa(await readJSON(req, 10 * 1024 * 1024))); }
+    if (path === "/api/visas/read" && method === "POST") { needVisaOwner(); return send(res, 200, await service.aiVisa(await readJSON(req, 12 * 1024 * 1024))); }
+    if (vm && vm[2] && method === "GET") {
+      needVisaOwner(); const p = service.visaPhoto(vm[1]);
+      res.writeHead(200, { "content-type": p.mime, "content-length": p.data.length, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" });
+      return res.end(p.data);
+    }
+    if (vm && !vm[2] && method === "PUT") { needVisaOwner(); return send(res, 200, service.updateVisa(vm[1], await readJSON(req, 10 * 1024 * 1024))); }
+    if (vm && !vm[2] && method === "DELETE") { needVisaOwner(); return send(res, 200, service.removeVisa(vm[1])); }
+    if (path === "/api/search/settings" && method === "GET") { needOwner(); return send(res, 200, service.searchSettings()); }
+    if (path === "/api/search/settings" && method === "PUT") { needOwner(); return send(res, 200, service.setSearchSettings(await readJSON(req, 4096))); }
+    if (path === "/api/search" && method === "GET") { needWrite(); return send(res, 200, await service.webSearch(url.searchParams.get("q"))); }
+    if (path === "/api/search/test" && method === "POST") { needOwner(); const b = await readJSON(req, 4096); return send(res, 200, await service.webSearch("indian railways", b.url)); }
+    if (path === "/api/ai/digest" && method === "POST") { needWrite(); return send(res, 200, await service.aiDigest(await readJSON(req, 64 * 1024))); }
     if (path === "/api/ai/status") { if (who !== "owner" && who !== "agent") throw new InputError("Sign in first.", 401); return send(res, 200, await service.aiStatus()); }
     if (path === "/api/ai/extract" && method === "POST") { needWrite(); return send(res, 200, { flights: await service.aiExtract(await readJSON(req, 12 * 1024 * 1024)) }); }
     if (path === "/api/ai/ask" && method === "POST") { needRead(); if (who === "public") throw new InputError("Sign in to ask questions.", 401); return send(res, 200, { answer: await service.aiAsk((await readJSON(req)).question) }); }
