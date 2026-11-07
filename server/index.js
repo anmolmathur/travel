@@ -75,7 +75,7 @@ export function buildApp(env = process.env) {
     const needRead = () => { if (!canRead) throw new InputError("Sign in to see this logbook.", 401); };
     const needWrite = () => { if (!canWrite) throw new InputError(who ? "This view is read-only. Sign in to make changes." : "Sign in first.", 401); };
 
-    if (path === "/api/me") return send(res, 200, { who, canRead, canWrite, authEnabled: auth.enabled, features: service.features });
+    if (path === "/api/me") return send(res, 200, { who, canRead, canWrite, authEnabled: auth.enabled, features: { ...service.features, visas: who === "owner" } });
     if (path === "/api/login" && method === "POST") {
       const { password } = await readJSON(req, 4096);
       const r = auth.tryLogin(req, password);
@@ -110,6 +110,19 @@ export function buildApp(env = process.env) {
     if (path === "/api/ai/settings" && method === "GET") { needOwner(); return send(res, 200, service.aiSettings()); }
     if (path === "/api/ai/settings" && method === "PUT") { needOwner(); return send(res, 200, service.setAISettings(await readJSON(req, 8192))); }
     if (path === "/api/ai/models" && method === "POST") { needOwner(); return send(res, 200, await service.aiModels(await readJSON(req, 8192))); }
+    // Visas hold passport details: the signed-in owner only. Not agents (MCP), not public viewers.
+    const needVisaOwner = () => { if (who !== "owner") throw new InputError("Only the owner can see visas. Sign in first.", 401); };
+    const vm = path.match(/^\/api\/visas\/(v_[a-f0-9]{12})(\/photo)?$/);
+    if (path === "/api/visas" && method === "GET") { needVisaOwner(); return send(res, 200, { visas: service.visas() }); }
+    if (path === "/api/visas" && method === "POST") { needVisaOwner(); return send(res, 201, service.createVisa(await readJSON(req, 10 * 1024 * 1024))); }
+    if (path === "/api/visas/read" && method === "POST") { needVisaOwner(); return send(res, 200, await service.aiVisa(await readJSON(req, 12 * 1024 * 1024))); }
+    if (vm && vm[2] && method === "GET") {
+      needVisaOwner(); const p = service.visaPhoto(vm[1]);
+      res.writeHead(200, { "content-type": p.mime, "content-length": p.data.length, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" });
+      return res.end(p.data);
+    }
+    if (vm && !vm[2] && method === "PUT") { needVisaOwner(); return send(res, 200, service.updateVisa(vm[1], await readJSON(req, 10 * 1024 * 1024))); }
+    if (vm && !vm[2] && method === "DELETE") { needVisaOwner(); return send(res, 200, service.removeVisa(vm[1])); }
     if (path === "/api/search/settings" && method === "GET") { needOwner(); return send(res, 200, service.searchSettings()); }
     if (path === "/api/search/settings" && method === "PUT") { needOwner(); return send(res, 200, service.setSearchSettings(await readJSON(req, 4096))); }
     if (path === "/api/search" && method === "GET") { needWrite(); return send(res, 200, await service.webSearch(url.searchParams.get("q"))); }

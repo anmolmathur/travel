@@ -6,6 +6,8 @@ import {
   isAir, modeOf, MODE_INFO,
 } from "../public/lib/core.js";
 import { cleanPnr, cleanRail } from "../public/lib/rail.js";
+import { cleanVisa, visaStatus, parseVisaMrz, VISA_ZONES } from "../public/lib/visa.js";
+import { randomBytes } from "node:crypto";
 import { createAI, PROVIDERS } from "./ai.js";
 import { createSearch } from "./search.js";
 
@@ -95,6 +97,63 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     return { provider, models: await client.listModels() };
   }
 
+  /* ---------- visas ---------- */
+  // Owner-only data (the routes enforce it). Photos are kept apart and only sent when asked for.
+  const knownCountries = new Set(Object.keys(ref.countries));
+  const ccOf = code => ref.ap.get(code)?.cc;
+  const PHOTO = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
+  const MAX_PHOTO = 6 * 1024 * 1024;
+  const withStatus = v => ({ ...v, status: visaStatus(v, { legs: forPerson(all(), v.person), ccOf, today: today() }) });
+  const visas = () => db.visas.list().map(withStatus).sort((a, b) => a.validUntil.localeCompare(b.validUntil));
+  function checkVisa(input) {
+    const { visa, error } = cleanVisa(input, { known: knownCountries, people: new Set(people().map(p => p.id)) });
+    if (error) throw new InputError(error);
+    return visa;
+  }
+  function storePhoto(id, photo) {
+    const m = PHOTO.exec(String(photo));
+    if (!m) throw new InputError("The photo must be a JPEG, PNG or WebP image.");
+    const data = Buffer.from(m[2], "base64");
+    if (data.length > MAX_PHOTO) throw new InputError("That photo is too large (over 6 MB).", 413);
+    db.visas.setPhoto(id, m[1], data);
+  }
+  function createVisa(input = {}) {
+    const visa = checkVisa(input), now = new Date().toISOString();
+    const id = "v_" + randomBytes(6).toString("hex");
+    if (input.photo) storePhoto(id, input.photo);
+    return withStatus(db.visas.put(id, { ...visa, hasPhoto: Boolean(input.photo), createdAt: now, updatedAt: now }));
+  }
+  function updateVisa(id, input = {}) {
+    const old = db.visas.get(id); if (!old) throw new InputError("No visa with that id.", 404);
+    const visa = checkVisa({ ...old, ...input });
+    let hasPhoto = Boolean(old.hasPhoto);
+    if (input.photo) { storePhoto(id, input.photo); hasPhoto = true; }
+    else if (input.photo === null) { db.visas.dropPhoto(id); hasPhoto = false; }
+    return withStatus(db.visas.put(id, { ...visa, hasPhoto, createdAt: old.createdAt, updatedAt: new Date().toISOString() }));
+  }
+  function removeVisa(id) { if (!db.visas.del(id)) throw new InputError("No visa with that id.", 404); return { deleted: id }; }
+  function visaPhoto(id) { const p = db.visas.photo(id); if (!p) throw new InputError("No photo saved for this visa.", 404); return p; }
+
+  /** Read a photographed visa page. Nothing is saved: the app shows the fields for the owner to check first. */
+  async function aiVisa({ image } = {}) {
+    const gemini = needAI();
+    const m = /^data:(image\/(?:png|jpeg|webp|gif|heic));base64,([A-Za-z0-9+/=]+)$/.exec(String(image || ""));
+    if (!m) throw new InputError("Send a photo of the visa page.");
+    const out = await gemini.visa({ image: { mimeType: m[1], data: m[2] }, today: today(), zones: Object.keys(VISA_ZONES) });
+    const r = Array.isArray(out) ? out[0] || {} : out || {};
+    if (r.error) throw new InputError(`That doesn't look like a visa (${String(r.error).slice(0, 120)}). Photograph the visa page itself, flat and in good light.`, 422);
+    const mrz = r.mrz ? parseVisaMrz(Array.isArray(r.mrz) ? r.mrz.join("\n") : r.mrz) : null;
+    const fields = { ...r }; delete fields.mrz;
+    const checks = [];
+    // The MRZ carries check digits: when they hold and disagree with what the AI read from the printed text, trust them.
+    if (mrz?.validUntilOk && mrz.validUntil && mrz.validUntil !== fields.validUntil) { checks.push(`Expiry read as ${fields.validUntil || "blank"}; the machine-readable lines say ${mrz.validUntil}, which was used.`); fields.validUntil = mrz.validUntil; }
+    if (mrz?.numberOk && mrz.number && !fields.number) fields.number = mrz.number;
+    if (mrz && !mrz.validUntilOk) checks.push("The machine-readable lines didn't pass their check digit, so check the expiry date by eye.");
+    const country = String(fields.country || "").toUpperCase();
+    if (country && !VISA_ZONES[country] && !knownCountries.has(country)) checks.push(`"${country}" isn't a country code Wander knows. Pick the country.`);
+    return { visa: fields, mrz: mrz ? { ok: mrz.validUntilOk && mrz.numberOk, issuer: mrz.issuer, number: mrz.number, validUntil: mrz.validUntil } : null, checks };
+  }
+
   /* ---------- people ---------- */
   // "me" is always the owner. Seeded from WANDER_PEOPLE ("me:Anmol,kruti:Kruti") the first time.
   function people() {
@@ -118,6 +177,8 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     const inUse = new Set(all().flatMap(travellersOf));
     const gone = people().filter(p => !ids.has(p.id) && inUse.has(p.id));
     if (gone.length) throw new InputError(`${gone.map(p => p.name).join(", ")} still ${gone.length > 1 ? "have" : "has"} flights. Reassign them first.`);
+    const withVisas = people().filter(p => !ids.has(p.id) && db.visas.list().some(v => v.person === p.id));
+    if (withVisas.length) throw new InputError(`${withVisas.map(p => p.name).join(", ")} still ${withVisas.length > 1 ? "have" : "has"} visas saved. Delete those first.`);
     db.kvPut("people", out);
     return out;
   }
@@ -364,6 +425,7 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     exportCSV: () => toOpenFlightsCSV(all(), ref, today()),
     aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup, aiSettings, setAISettings, aiModels,
     searchSettings, setSearchSettings, webSearch, aiDigest,
+    visas, createVisa, updateVisa, removeVisa, visaPhoto, aiVisa,
     get features() { return { ai: Boolean(ai()), lookup: Boolean(lookupProvider), search: Boolean(search()) }; },
   };
 }
