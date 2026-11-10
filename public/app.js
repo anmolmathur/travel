@@ -4,7 +4,7 @@ import {
   validate, DEFUNCT, CABINS, REASONS, MONTHS, todayISO, dayDiff, MODES, MODE_INFO, modeOf, isAir, legName, legKm,
 } from "./lib/core.js";
 import { RAIL_CLASSES, RAIL_QUOTAS, BERTH_TYPES, STATIONS, parseIrctc, statusKind, legLinks } from "./lib/rail.js";
-import { VISA_ZONES, VISA_ENTRIES, VISA_KINDS, visaStatus, visaFor, visaPlace, maskNo } from "./lib/visa.js";
+import { VISA_ZONES, VISA_ENTRIES, VISA_KINDS, visaStatus, visaFor, visaPlace, maskNo, byRecent } from "./lib/visa.js";
 import { createGlobe, GROUND_STYLE } from "./globe.js";
 
 const $ = s => document.querySelector(s);
@@ -598,13 +598,13 @@ function visaChips(f) {
 function renderVisas() {
   const el = $("#p-visas");
   el.onclick = onVisasClick;
-  const head = `<div class="sec-head"><h2>Visas <em>· ${VISAS.length}</em></h2><p>What each visa allows, and what's used. Entries and stays come from your logged journeys.</p><button class="btn primary" type="button" data-vadd>📷 Add a visa</button></div>`;
+  const head = `<div class="sec-head"><h2>Visas <em>· ${VISAS.length}</em></h2><p>What each visa allows, and what's used. Entries and stays come from your logged journeys.</p><span class="vhead-btns">${VISAS.length ? `<a class="btn" href="/api/visas/export.xlsx" download title="Every visa with full details, for filling in forms">⬇ Excel</a>` : ""}<button class="btn primary" type="button" data-vadd>📷 Add a visa</button></span></div>`;
   if (!VISAS.length) {
     el.innerHTML = head + `<div class="empty"><h2>No visas yet</h2><p>Photograph the visa page in your passport and Wander reads the country, dates, entries and stay limit for you to check. Or type them in.</p><p><button class="btn primary" type="button" data-vadd>📷 Photograph a visa</button></p></div>`;
     return;
   }
-  const order = { expiring: 0, valid: 1, upcoming: 2, expired: 3 };
-  const rows = VISAS.map(v => ({ v, s: vStatus(v) })).sort((x, y) => order[x.s.state] - order[y.s.state] || x.v.validUntil.localeCompare(y.v.validUntil));
+  // Newest first (by issue date); expired visas sit in their own fold below, also newest first.
+  const rows = [...VISAS].sort(byRecent).map(v => ({ v, s: vStatus(v) }));
   const live = rows.filter(r => r.s.state !== "expired"), old = rows.filter(r => r.s.state === "expired");
   const card = ({ v, s }) => {
     const [cls, label] = STATE[s.state];
@@ -624,7 +624,7 @@ function renderVisas() {
       ${stays ? `<details class="vstays"><summary>Visits on this visa (${s.stays.length})</summary><ul>${stays}</ul></details>` : ""}
       ${v.number || v.passportNo ? `<div class="vnums">${v.number ? `<span>Visa no. <button type="button" class="reveal mono" data-reveal="${esc(v.number)}">${esc(maskNo(v.number))}</button></span>` : ""}${v.passportNo ? `<span>Passport <button type="button" class="reveal mono" data-reveal="${esc(v.passportNo)}">${esc(maskNo(v.passportNo))}</button></span>` : ""}</div>` : ""}
       ${v.notes ? `<p class="muted vnotes">${esc(v.notes)}</p>` : ""}
-      <div class="row">${v.hasPhoto ? '<button class="btn small" type="button" data-vphoto>View visa page</button>' : ""}<button class="btn small ghost" type="button" data-vedit>Edit</button><button class="btn small ghost danger" type="button" data-vdel>Delete</button></div>
+      <div class="row">${v.hasPhoto ? '<button class="btn small" type="button" data-vphoto>View visa page</button>' : ""}${v.hasPhoto && me.features?.ai ? '<button class="btn small" type="button" data-vsync title="Read the saved photo again and refill the form">✦ Read photo again</button>' : ""}<button class="btn small ghost" type="button" data-vedit>Edit</button><button class="btn small ghost danger" type="button" data-vdel>Delete</button></div>
     </article>`;
   };
   el.innerHTML = head + `<div class="jlist">${live.map(card).join("")}</div>` +
@@ -638,6 +638,7 @@ async function onVisasClick(e) {
   const c = e.target.closest("[data-vid]"), v = c && VISAS.find(x => x.id === c.dataset.vid); if (!v) return;
   if (e.target.closest("[data-vphoto]")) openModal(`<div class="story"><p class="eyebrow">${esc(pName(v.person))}</p><h2 id="modalTitle">${esc(vPlace(v))} visa</h2><img class="vphoto" src="/api/visas/${esc(v.id)}/photo" alt="Photo of the ${esc(vPlace(v))} visa page"><p class="muted">Kept on your Wander server, and on this device for offline use until you sign out.</p></div>`);
   if (e.target.closest("[data-vedit]")) openVisaForm(v);
+  if (e.target.closest("[data-vsync]")) openVisaForm(v, { autoRead: true });
   const del = e.target.closest("[data-vdel]");
   if (del) {
     if (!del.dataset.sure) { del.dataset.sure = "1"; del.textContent = "Tap again to delete"; setTimeout(() => { if (del.isConnected) { delete del.dataset.sure; del.textContent = "Delete"; } }, 4000); return; }
@@ -649,8 +650,8 @@ async function onVisasClick(e) {
  * Read a visa photo on the server. The read runs as a job that this polls every 2 seconds, so a slow AI answer never
  * holds one request open long enough for Cloudflare or the phone to cut it off. A brief network drop is retried.
  */
-async function readVisaPhoto(image, onTick) {
-  const { job } = await api("/api/visas/read/start", { method: "POST", body: JSON.stringify({ image }) });
+async function readVisaPhoto(source, onTick) {
+  const { job } = await api("/api/visas/read/start", { method: "POST", body: JSON.stringify(source) });
   const t0 = Date.now();
   let misses = 0;
   while (Date.now() - t0 < 200_000) {
@@ -665,13 +666,14 @@ async function readVisaPhoto(image, onTick) {
   throw new Error("Reading the photo took too long. Try again, or fill the fields in yourself.");
 }
 /** Add or edit a visa: photograph the page, let the AI fill the form, check it, save. */
-function openVisaForm(v = null) {
+function openVisaForm(v = null, { autoRead = false } = {}) {
   let photo = null; // a new photo (data URL) to save, if any
+  const saved = Boolean(v?.hasPhoto); // editing a visa whose photo is already on the server
   const val = k => esc(v?.[k] ?? "");
   const countries = Object.entries(REF.countries).map(([c, [n]]) => [c, n]).sort((a, b) => a[1].localeCompare(b[1]));
   const opts = sel => `<option value="">Choose…</option>${Object.entries(VISA_ZONES).map(([c, z]) => `<option value="${c}"${sel === c ? " selected" : ""}>${esc(z.name)}</option>`).join("")}<option disabled>──────────</option>${countries.map(([c, n]) => `<option value="${c}"${sel === c ? " selected" : ""}>${esc(n)}</option>`).join("")}`;
   const aiNote = me.features?.ai ? "The photo is sent to your AI provider (set under ⚙ AI) to read the text. Nothing is saved until you press Save." : "AI is off, so fill the fields in yourself. Turn it on under ⚙ AI to read photos.";
-  openModal(`<div class="story visa-form"><p class="eyebrow">${v ? "Edit visa" : "New visa"}</p><h2 id="modalTitle">${v ? esc(vPlace(v)) : "Add a visa"}</h2>
+  openModal(`<div class="story visa-form"><p class="eyebrow">${v ? "Edit visa" : "New visa"}</p><h2 id="modalTitle">${v ? `${esc(vPlace(v))} visa` : "Add a visa"}</h2>
     <div class="vcap">
       <button class="btn primary" type="button" id="vCamBtn">📷 Take a photo</button>
       <button class="btn" type="button" id="vPickBtn">Choose an image</button>
@@ -700,8 +702,7 @@ function openVisaForm(v = null) {
       <div class="field"><label for="vPassExp">Passport expires</label><input type="date" id="vPassExp" value="${val("passportExpiry")}"></div>
       <div class="field wide"><label for="vNotes">Notes</label><input id="vNotes" value="${val("notes")}" maxlength="500" placeholder="Annotations, conditions"></div>
     </div>
-    <label class="check" id="vKeepRow" hidden><input type="checkbox" id="vKeep" checked> Keep this photo with the visa in Wander</label>
-    ${v?.hasPhoto ? '<label class="check"><input type="checkbox" id="vDrop"> Remove the saved photo</label>' : ""}
+    <label class="check" id="vKeepRow"${saved ? "" : " hidden"}><input type="checkbox" id="vKeep" checked> Keep this photo with the visa in Wander</label>
     <p class="err" id="vErr" role="alert"></p>
     <div class="row"><button class="btn primary" type="button" id="vSave">Save visa</button></div></div>`);
   // Progress and problems show right under the buttons, where the eye is, not at the foot of a long form.
@@ -725,10 +726,10 @@ function openVisaForm(v = null) {
   $("#vCamBtn").onclick = () => $("#vCam").click();
   $("#vPickBtn").onclick = () => $("#vPick").click();
   if ($("#vRead")) $("#vRead").onclick = async () => {
-    const b = $("#vRead"); if (!photo) { status("Take or choose a photo first.", "bad"); return; }
+    const b = $("#vRead"); if (!photo && !saved) { status("Take or choose a photo first.", "bad"); return; }
     b.disabled = true; b.textContent = "Reading the visa…"; $("#vChecks").innerHTML = ""; status("Reading the visa… this can take up to a minute.");
     try {
-      const { visa: r, mrz, checks } = await readVisaPhoto(photo, sec => status(`Reading the visa… ${sec} s (usually 10–40 s)`));
+      const { visa: r, mrz, checks } = await readVisaPhoto(photo ? { image: photo } : { visaId: v.id }, sec => status(`Reading the visa… ${sec} s (usually 10–40 s)`));
       // Fill every field the photo gave (the server has already tidied codes, dates and numbers), and mark them.
       const FIELDS = { person: "#vPerson", country: "#vCountry", kind: "#vKind", category: "#vCat", entries: "#vEntries", maxStay: "#vStay", issued: "#vIssued", validFrom: "#vFrom",
         validUntil: "#vUntil", number: "#vNumber", issuedAt: "#vIssuedAt", name: "#vName", passportNo: "#vPassport", passportExpiry: "#vPassExp", notes: "#vNotes" };
@@ -747,16 +748,24 @@ function openVisaForm(v = null) {
     } catch (err) { status(err.message, "bad"); $("#vChecks").innerHTML = ""; b.innerHTML = '<span class="spark">✦</span> Try again'; }
     b.disabled = false;
   };
+  if (saved) {
+    $("#vImg").src = `/api/visas/${encodeURIComponent(v.id)}/photo`; $("#vPrev").hidden = false;
+    const r = $("#vRead"); if (r) r.disabled = false;
+    if (autoRead && r) { status("Reading the saved photo…"); r.click(); }
+  }
   $("#vSave").onclick = async () => {
     const body = {
       person: $("#vPerson").value, country: $("#vCountry").value, kind: $("#vKind").value, category: $("#vCat").value, entries: $("#vEntries").value,
       maxStay: $("#vStay").value, issued: $("#vIssued").value, validFrom: $("#vFrom").value, validUntil: $("#vUntil").value, number: $("#vNumber").value,
       issuedAt: $("#vIssuedAt").value, name: $("#vName").value, passportNo: $("#vPassport").value, passportExpiry: $("#vPassExp").value, notes: $("#vNotes").value,
     };
-    if (photo && $("#vKeep").checked) {
-      if (!/^data:image\/(jpeg|png|webp);/.test(photo)) { $("#vErr").textContent = "This photo's format can't be stored. Untick “Keep this photo”, or choose a JPEG."; return; }
-      body.photo = photo;
-    } else if ($("#vDrop")?.checked) body.photo = null;
+    // Keep ticked: store a new photo if one was taken (the saved one stays otherwise). Unticked: drop any saved photo.
+    if ($("#vKeep").checked) {
+      if (photo) {
+        if (!/^data:image\/(jpeg|png|webp);/.test(photo)) { $("#vErr").textContent = "This photo's format can't be stored. Untick “Keep this photo”, or choose a JPEG."; return; }
+        body.photo = photo;
+      }
+    } else if (saved) body.photo = null;
     const b = $("#vSave"); b.disabled = true;
     try {
       const saved = await api(v ? `/api/visas/${encodeURIComponent(v.id)}` : "/api/visas", { method: v ? "PUT" : "POST", body: JSON.stringify(body) });
