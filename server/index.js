@@ -129,6 +129,10 @@ export function buildApp(env = process.env) {
     if (path === "/api/visas" && method === "GET") { needVisaOwner(); return send(res, 200, { visas: service.visas() }); }
     if (path === "/api/visas" && method === "POST") { needVisaOwner(); return send(res, 201, service.createVisa(await readJSON(req, 10 * 1024 * 1024))); }
     if (path === "/api/visas/read" && method === "POST") { needVisaOwner(); return send(res, 200, await service.aiVisa(await readJSON(req, 12 * 1024 * 1024))); }
+    // The app starts a read and polls for it, so no single request has to outlast a proxy's timeout.
+    if (path === "/api/visas/read/start" && method === "POST") { needVisaOwner(); return send(res, 202, service.startVisaRead(await readJSON(req, 12 * 1024 * 1024))); }
+    const rj = path.match(/^\/api\/visas\/read\/([a-f0-9]{18})$/);
+    if (rj && method === "GET") { needVisaOwner(); return send(res, 200, service.visaReadJob(rj[1])); }
     if (vm && vm[2] && method === "GET") {
       needVisaOwner(); const p = service.visaPhoto(vm[1]);
       res.writeHead(200, { "content-type": p.mime, "content-length": p.data.length, "cache-control": "private, no-cache", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" });

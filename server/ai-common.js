@@ -74,7 +74,7 @@ ${text ? `\nBOOKING TEXT:\n"""\n${String(text).slice(0, 20000)}\n"""` : ""}` }];
     },
 
     /** Read the details off a photographed visa page (sticker, stamp or printed e-visa). */
-    async visa({ image, today, zones = [] }) {
+    async visa({ image, today, zones = [], budgetMs }) {
       const parts = [{ text: `You read a photographed visa from a passport page, or a printed e-visa, and copy its details exactly.
 Today is ${today}. Return one JSON object:
 {"country":"ISO 3166-1 alpha-2 code of the country the visa lets you enter${zones.length ? `, or ${zones.join(" / ")} for a Schengen (uniform) visa` : ""}",
@@ -92,7 +92,7 @@ Today is ${today}. Return one JSON object:
 Rules: fill every field you can read. Dates on visas are usually day first (DD-MM-YYYY or 12 MAR 2026); convert carefully.
 "Duration of stay" or "No. of days" is maxStay. Never guess a value you cannot read: leave it empty.
 If the image is not a visa, return {"error":"what the image shows instead"}.` }, { inlineData: { mimeType: image.mimeType, data: image.data } }];
-      return generate({ parts, temperature: 0 });
+      return generate({ parts, temperature: 0, quick: true, ...(budgetMs ? { budgetMs } : {}) });
     },
 
     /** A short answer from web-search snippets (e.g. a train's running status), with sources. */
