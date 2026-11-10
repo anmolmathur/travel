@@ -135,11 +135,16 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
   function visaPhoto(id) { const p = db.visas.photo(id); if (!p) throw new InputError("No photo saved for this visa.", 404); return p; }
 
   /** Read a photographed visa page. Nothing is saved: the app shows the fields for the owner to check first. */
-  async function aiVisa({ image } = {}) {
+  async function aiVisa({ image, budgetMs } = {}) {
     const gemini = needAI();
     const m = /^data:(image\/(?:png|jpeg|webp|gif|heic));base64,([A-Za-z0-9+/=]+)$/.exec(String(image || ""));
     if (!m) throw new InputError("Send a photo of the visa page.");
-    const out = await gemini.visa({ image: { mimeType: m[1], data: m[2] }, today: today(), zones: Object.keys(VISA_ZONES) });
+    const t0 = Date.now(), kb = Math.round(m[2].length * 0.75 / 1024);
+    let out;
+    // Logged without any of the visa's contents: only size, time, model and outcome.
+    try { out = await gemini.visa({ image: { mimeType: m[1], data: m[2] }, today: today(), zones: Object.keys(VISA_ZONES), budgetMs }); }
+    catch (e) { console.warn(`Visa read failed after ${((Date.now() - t0) / 1000).toFixed(1)} s (${gemini.provider} ${gemini.model}, ${kb} KB image): ${e.status || ""} ${e.message}`); throw e; }
+    console.log(`Visa read in ${((Date.now() - t0) / 1000).toFixed(1)} s (${gemini.provider} ${gemini.model}, ${kb} KB image).`);
     const r = Array.isArray(out) ? out[0] || {} : out || {};
     if (r.error) throw new InputError(`That doesn't look like a visa (${String(r.error).slice(0, 120)}). Photograph the visa page itself, flat and in good light.`, 422);
     const mrz = r.mrz ? parseVisaMrz(Array.isArray(r.mrz) ? r.mrz.join("\n") : r.mrz) : null;
@@ -152,6 +157,32 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     if (r.country && !visa.country) checks.push(`Couldn't match "${String(r.country).slice(0, 40)}" to a country. Pick it from the list.`);
     if (!visa.validUntil) checks.push("The expiry date couldn't be read. Enter it from the visa.");
     return { visa, filled, mrz: mrz ? { ok: mrz.validUntilOk && mrz.numberOk, issuer: mrz.issuer, number: mrz.number, validUntil: mrz.validUntil } : null, checks };
+  }
+
+  /**
+   * Reading a visa can take longer than a proxy will hold a request open (Cloudflare: 100 s; phones give up sooner),
+   * so it runs as a job: start it, then ask for the result every few seconds. Jobs live in memory for 10 minutes.
+   */
+  const jobs = new Map();
+  const VISA_JOB_MS = 150_000;
+  function startVisaRead(body = {}) {
+    needAI(); // fail at once, not on the first poll, when AI is off
+    if (!/^data:image\//.test(String(body.image || ""))) throw new InputError("Send a photo of the visa page.");
+    for (const [k, j] of jobs) if (Date.now() - j.started > 600_000) jobs.delete(k);
+    const id = randomBytes(9).toString("hex"), job = { state: "working", started: Date.now() };
+    jobs.set(id, job);
+    aiVisa({ image: body.image, budgetMs: VISA_JOB_MS })
+      .then(result => Object.assign(job, { state: "done", result, finished: Date.now() }))
+      .catch(e => Object.assign(job, { state: "failed", error: e.status ? e.message : "Something went wrong reading the photo.", status: e.status || 500, finished: Date.now() }));
+    return { job: id };
+  }
+  function visaReadJob(id) {
+    const j = jobs.get(String(id));
+    if (!j) throw new InputError("That read has expired. Take the photo again.", 404);
+    const seconds = Math.round(((j.finished || Date.now()) - j.started) / 1000);
+    if (j.state === "done") return { state: "done", seconds, ...j.result };
+    if (j.state === "failed") return { state: "failed", seconds, error: j.error, status: j.status };
+    return { state: "working", seconds };
   }
 
   /* ---------- people ---------- */
@@ -425,7 +456,7 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     exportCSV: () => toOpenFlightsCSV(all(), ref, today()),
     aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup, aiSettings, setAISettings, aiModels,
     searchSettings, setSearchSettings, webSearch, aiDigest,
-    visas, createVisa, updateVisa, removeVisa, visaPhoto, aiVisa,
+    visas, createVisa, updateVisa, removeVisa, visaPhoto, aiVisa, startVisaRead, visaReadJob,
     get features() { return { ai: Boolean(ai()), lookup: Boolean(lookupProvider), search: Boolean(search()) }; },
   };
 }

@@ -27,9 +27,9 @@ export function createOpenAI({ apiKey, model, smartModel, baseUrl, fetchImpl = f
     return out.length === 1 && out[0].type === "text" ? out[0].text : out;
   };
 
-  async function generate({ parts, json = true, useSmart = false, temperature = 0.3, system }) {
+  async function generate({ parts, json = true, useSmart = false, temperature = 0.3, system, budgetMs = BUDGET_MS }) {
     const m = chosen[useSmart ? "smart" : "fast"]; if (!m) throw needModel(label);
-    const deadline = Date.now() + BUDGET_MS;
+    const deadline = Date.now() + budgetMs;
     const body = {
       model: m,
       messages: [...(system || json ? [{ role: "system", content: [system, json ? JSON_ONLY : ""].filter(Boolean).join("\n") }] : []), { role: "user", content: toContent(parts) }],
@@ -78,9 +78,9 @@ export function createAnthropic({ apiKey, model, smartModel, fetchImpl = fetch }
   }
 
   // temperature is not sent: current Claude models reject sampling parameters.
-  async function generate({ parts, json = true, useSmart = false, system }) {
+  async function generate({ parts, json = true, useSmart = false, system, budgetMs = BUDGET_MS }) {
     const m = chosen[useSmart ? "smart" : "fast"];
-    const deadline = Date.now() + BUDGET_MS;
+    const deadline = Date.now() + budgetMs;
     const content = [
       ...parts.filter(p => p.inlineData).map(p => ({ type: "image", source: { type: "base64", media_type: p.inlineData.mimeType, data: p.inlineData.data } })),
       ...parts.filter(p => !p.inlineData).map(p => ({ type: "text", text: p.text })),

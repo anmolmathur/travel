@@ -35,16 +35,22 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
     return { res, data: await res.json().catch(() => ({})) };
   }
 
-  async function generate({ parts, json = true, useSmart = false, temperature = 0.3, system }) {
+  async function generate({ parts, json = true, useSmart = false, temperature = 0.3, system, budgetMs = BUDGET_MS, quick = false }) {
     const slot = useSmart ? "smart" : "fast";
     const body = {
       contents: [{ role: "user", parts }],
-      generationConfig: { temperature, ...(json ? { responseMimeType: "application/json" } : {}) },
+      // quick: copying text off an image needs little reasoning, and thinking is most of the wait on Flash models.
+      generationConfig: { temperature, ...(json ? { responseMimeType: "application/json" } : {}), ...(quick ? { thinkingConfig: { thinkingBudget: 512 } } : {}) },
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     };
-    const deadline = Date.now() + BUDGET_MS;
+    const deadline = Date.now() + budgetMs;
     let used = chosen[slot];
     let { res, data } = await post(used, body, deadline);
+    // A model that doesn't take a thinking budget says so with a 400: ask again without one.
+    if (quick && res.status === 400 && /thinking/i.test(data?.error?.message || "")) {
+      delete body.generationConfig.thinkingConfig;
+      ({ res, data } = await post(used, body, deadline));
+    }
     const msg = data?.error?.message || "";
     // The configured model may have been renamed or retired: find the current one and retry once.
     if (res.status === 404 || (res.status === 400 && /not (found|supported)|unknown model|is not available/i.test(msg))) {

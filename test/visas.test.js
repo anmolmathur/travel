@@ -155,3 +155,38 @@ test("tidyRead: messy AI output becomes form values, gaps filled from the MRZ an
   // a name shared by nobody, or by two people, picks no one
   assert.equal(tidyRead({ name: "JOHN DOE" }, { people }).visa.person, undefined);
 });
+
+test("visa reads run as a job the app polls, so slow AI answers never hit a proxy timeout", async () => {
+  const db = openDb(":memory:");
+  let release;
+  const slow = { provider: "fake", model: "m", visa: () => new Promise(r => { release = () => r({ country: "JPN", validUntil: "29 JAN 2027", maxStay: "15 days" }); }) };
+  const svc = createService({ db, ref, makeAI: () => slow, aiEnv: { apiKey: "k" } });
+  const { job } = svc.startVisaRead({ image: "data:image/jpeg;base64,AAAA" });
+  assert.match(job, /^[a-f0-9]{18}$/);
+  assert.equal(svc.visaReadJob(job).state, "working");
+  release(); await new Promise(r => setImmediate(r));
+  const done = svc.visaReadJob(job);
+  assert.deepEqual([done.state, done.visa.country, done.visa.validUntil, done.visa.maxStay], ["done", "JP", "2027-01-29", 15]);
+  // a failure comes back as a readable message on the next poll
+  const failing = createService({ db, ref, makeAI: () => ({ provider: "fake", model: "m", visa: async () => { throw Object.assign(new Error("Gemini is overloaded right now."), { status: 503 }); } }), aiEnv: { apiKey: "k" } });
+  const f = failing.startVisaRead({ image: "data:image/jpeg;base64,AAAA" }).job;
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual([failing.visaReadJob(f).state, failing.visaReadJob(f).error, failing.visaReadJob(f).status], ["failed", "Gemini is overloaded right now.", 503]);
+  assert.throws(() => svc.visaReadJob("0".repeat(18)), /expired/);
+  assert.throws(() => createService({ db, ref, aiEnv: {} }).startVisaRead({ image: "data:image/jpeg;base64,AAAA" }), /AI features are off/);
+});
+
+test("Gemini quick reads ask for a small thinking budget, and drop it if the model refuses", async () => {
+  const { createGemini } = await import("../server/gemini.js");
+  const bodies = [];
+  const fetchImpl = async (url, init) => {
+    const b = JSON.parse(init.body); bodies.push(b);
+    if (b.generationConfig.thinkingConfig) return { ok: false, status: 400, json: async () => ({ error: { message: "Thinking budget is not supported by this model." } }) };
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"country":"JP"}' }] } }] }) };
+  };
+  const g = createGemini({ apiKey: "k", model: "gemini-x-flash", fetchImpl });
+  const out = await g.visa({ image: { mimeType: "image/jpeg", data: "AAAA" }, today: "2026-11-10" });
+  assert.deepEqual(out, { country: "JP" });
+  assert.deepEqual(bodies.map(b => Boolean(b.generationConfig.thinkingConfig)), [true, false]);
+  assert.equal(bodies[0].generationConfig.thinkingConfig.thinkingBudget, 512);
+});

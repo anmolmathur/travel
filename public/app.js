@@ -645,6 +645,25 @@ async function onVisasClick(e) {
     catch (err) { toast(err.message); }
   }
 }
+/**
+ * Read a visa photo on the server. The read runs as a job that this polls every 2 seconds, so a slow AI answer never
+ * holds one request open long enough for Cloudflare or the phone to cut it off. A brief network drop is retried.
+ */
+async function readVisaPhoto(image, onTick) {
+  const { job } = await api("/api/visas/read/start", { method: "POST", body: JSON.stringify({ image }) });
+  const t0 = Date.now();
+  let misses = 0;
+  while (Date.now() - t0 < 200_000) {
+    await new Promise(r => setTimeout(r, 2000));
+    let j;
+    try { j = await api(`/api/visas/read/${job}`); misses = 0; }
+    catch (e) { if (e.status === 404 || ++misses > 4) throw e; continue; }
+    if (j.state === "done") return j;
+    if (j.state === "failed") throw Object.assign(new Error(j.error), { status: j.status });
+    onTick?.(j.seconds);
+  }
+  throw new Error("Reading the photo took too long. Try again, or fill the fields in yourself.");
+}
 /** Add or edit a visa: photograph the page, let the AI fill the form, check it, save. */
 function openVisaForm(v = null) {
   let photo = null; // a new photo (data URL) to save, if any
@@ -709,7 +728,7 @@ function openVisaForm(v = null) {
     const b = $("#vRead"); if (!photo) { status("Take or choose a photo first.", "bad"); return; }
     b.disabled = true; b.textContent = "Reading the visa…"; $("#vChecks").innerHTML = ""; status("Reading the visa… this can take up to a minute.");
     try {
-      const { visa: r, mrz, checks } = await api("/api/visas/read", { method: "POST", body: JSON.stringify({ image: photo }) });
+      const { visa: r, mrz, checks } = await readVisaPhoto(photo, sec => status(`Reading the visa… ${sec} s (usually 10–40 s)`));
       // Fill every field the photo gave (the server has already tidied codes, dates and numbers), and mark them.
       const FIELDS = { person: "#vPerson", country: "#vCountry", kind: "#vKind", category: "#vCat", entries: "#vEntries", maxStay: "#vStay", issued: "#vIssued", validFrom: "#vFrom",
         validUntil: "#vUntil", number: "#vNumber", issuedAt: "#vIssuedAt", name: "#vName", passportNo: "#vPassport", passportExpiry: "#vPassExp", notes: "#vNotes" };
