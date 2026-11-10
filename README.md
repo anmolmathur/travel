@@ -48,7 +48,7 @@ Bring your own key: open **AI settings** (the ⚙ AI button, owner only) and pic
 - **Trip names**: evocative names and one-line summaries for trips.
 - **Where next**: destination ideas you haven't visited, reachable from home.
 
-`GEMINI_MODEL` handles extraction and trip names; `GEMINI_MODEL_SMART` handles questions, recaps and ideas. Both default to `gemini-flash-latest`, Google's alias for its current Flash model, which works on the free tier. Pro models need billing enabled on the key's Google project; set `GEMINI_MODEL_SMART` to one (for example `gemini-pro-latest`) if you have it. If the smart model has no quota, Wander uses the fast model instead.
+`GEMINI_MODEL` handles extraction and trip names; `GEMINI_MODEL_SMART` handles questions, recaps and ideas. Both default to `gemini-flash-latest`, Google's alias for its current Flash model, which works on the free tier. Pro models need billing enabled on the key's Google project; set `GEMINI_MODEL_SMART` to one (for example `gemini-pro-latest`) if you have it. If the smart model has no quota, Wander uses the fast model instead. Google's free tier also caps each model's requests per day (20 for some Flash models). When a model's daily allowance runs out, Wander moves to the next Flash or Flash-Lite model that still has one and stays there until the first resets; when they're all used up, the error says when they reset. For more than a handful of AI requests a day, turn on billing for the key's Google project.
 
 If an AI feature shows an error, run this on the server. It checks the key, lists the models your key can use and makes two small test calls:
 
