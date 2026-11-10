@@ -16,9 +16,27 @@ export function rankModels(names, family) {
 /** Picks the newest stable Gemini model of a family. */
 export const pickModel = (names, family) => rankModels(names, family)[0] || null;
 
+/** Flash-Lite models, newest first: a last resort with its own (larger) free-tier quota, and it reads images too. */
+const liteModels = names => names.filter(n => /^gemini-\d+(\.\d+)?-flash-lite/.test(n) && !/(preview|exp|tts|image|audio|live)/.test(n))
+  .sort((a, b) => parseFloat(b.slice(7)) - parseFloat(a.slice(7)) || a.length - b.length);
+/** A 429 for a used-up daily allowance (free tier: "requests per day"), as opposed to a per-minute burst. */
+export const isDailyQuota = msg => /per ?day|PerDay|_per_day/i.test(msg);
+/** "Please retry in 20h46m17.5s" -> milliseconds (default: an hour). */
+export function retryAfterMs(msg) {
+  const m = String(msg).match(/retry in\s*(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?/i);
+  const ms = m ? ((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (parseFloat(m[3]) || 0)) * 1000 : 0;
+  return ms > 0 ? ms : 3600_000;
+}
+const inHours = ms => (ms >= 3600_000 ? `about ${Math.round(ms / 3600_000)} h` : `about ${Math.max(1, Math.round(ms / 60_000))} min`);
+
 export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
   if (!apiKey) return null;
   const chosen = { fast: model, smart: smartModel || model };
+  // Free-tier daily allowances are per model. A model that has used its allowance is skipped until it resets,
+  // and the model that stood in for it is used directly, so no request is wasted on a known "no".
+  const spent = new Map(), standIn = new Map();
+  const isSpent = m => (spent.get(m) || 0) > Date.now();
+  const live = m => (isSpent(m) && standIn.has(m) && !isSpent(standIn.get(m)) ? standIn.get(m) : m);
   const headers = { "content-type": "application/json", "x-goog-api-key": apiKey };
 
   const request = (url, init, deadline) => requestWithin(fetchImpl, "Gemini", url, init, deadline);
@@ -44,7 +62,7 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
       ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     };
     const deadline = Date.now() + budgetMs;
-    let used = chosen[slot];
+    let used = live(chosen[slot]);
     let { res, data } = await post(used, body, deadline);
     // A model that doesn't take a thinking budget says so with a 400: ask again without one.
     if (quick && res.status === 400 && /thinking/i.test(data?.error?.message || "")) {
@@ -76,6 +94,20 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
         }
       }
     }
+    // A used-up daily allowance (free tier): try other Flash models, then Flash-Lite, each with its own allowance.
+    if (res.status === 429 && isDailyQuota(data?.error?.message || "")) {
+      const first = chosen[slot];
+      spent.set(used, Date.now() + retryAfterMs(data?.error?.message || ""));
+      const names = await listModels(deadline).catch(() => []);
+      const alts = [...rankModels(names, "flash"), ...liteModels(names)].filter((n, i, a) => a.indexOf(n) === i && !isSpent(n) && n !== used).slice(0, 3);
+      for (const alt of alts) {
+        const r = await post(alt, body, deadline);
+        ({ res, data } = r); used = alt;
+        if (res.ok) { standIn.set(first, alt); console.warn(`Gemini model "${first}" has used its daily free quota; using "${alt}" until it resets.`); break; }
+        if (res.status === 429 && isDailyQuota(data?.error?.message || "")) { spent.set(alt, Date.now() + retryAfterMs(data?.error?.message || "")); continue; }
+        break;
+      }
+    }
     // Pro models have no free-tier quota ("limit: 0"): use the fast model for smart tasks instead.
     if (res.status === 429 && useSmart && chosen.smart !== chosen.fast && /limit: 0\b/.test(data?.error?.message || "")) {
       console.warn(`Gemini model "${chosen.smart}" has no quota on this key (billing not enabled); using "${chosen.fast}" for questions and recaps.`);
@@ -84,7 +116,11 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
     }
     if (!res.ok) {
       const m = data?.error?.message || `HTTP ${res.status}`;
-      if (res.status === 429) throw fail(`Gemini rate limit or quota reached: ${m}`, 429);
+      if (res.status === 429 && isDailyQuota(m)) {
+        const wait = Math.min(...[...spent.values()].filter(t => t > Date.now()).map(t => t - Date.now()), retryAfterMs(m));
+        throw fail(`Your Gemini key's free daily allowance is used up (tried ${[...spent.keys()].filter(isSpent).join(", ") || used}). It resets in ${inHours(wait)}. To keep going now: turn on billing for the key's Google project (aistudio.google.com → Get API key → set up billing), or switch to another provider in ⚙ AI. You can also type the details in by hand.`, 429);
+      }
+      if (res.status === 429) throw fail(`Gemini rate limit reached: ${m.split(/\n|\* /)[0].slice(0, 160)} Wait a minute and try again.`, 429);
       if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`, 502);
       if (isBusy(res.status, m)) throw fail(`Gemini is overloaded right now (tried ${used} and other Flash models). Try again in a minute.`);
       throw fail(`Gemini error (${used}): ${m}`);
