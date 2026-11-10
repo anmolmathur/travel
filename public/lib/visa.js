@@ -235,3 +235,7 @@ export function tidyRead(raw = {}, { mrz = null, names = {}, people = [], visas 
   const visa = Object.fromEntries(Object.entries(out).filter(([, v]) => v !== "" && v !== 0 && v != null));
   return { visa, filled: Object.keys(visa) };
 }
+
+/** Newest first: by issue date, else first day of validity, else expiry. Ties go to the later expiry. */
+export const visaDate = v => v.issued || v.validFrom || v.validUntil || "";
+export const byRecent = (a, b) => visaDate(b).localeCompare(visaDate(a)) || String(b.validUntil || "").localeCompare(String(a.validUntil || ""));

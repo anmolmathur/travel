@@ -6,7 +6,8 @@ import {
   isAir, modeOf, MODE_INFO,
 } from "../public/lib/core.js";
 import { cleanPnr, cleanRail } from "../public/lib/rail.js";
-import { cleanVisa, visaStatus, parseVisaMrz, tidyRead, VISA_ZONES } from "../public/lib/visa.js";
+import { cleanVisa, visaStatus, parseVisaMrz, tidyRead, byRecent, visaPlace, VISA_ZONES, VISA_ENTRIES } from "../public/lib/visa.js";
+import { buildXlsx } from "./xlsx.js";
 import { randomBytes } from "node:crypto";
 import { createAI, PROVIDERS } from "./ai.js";
 import { createSearch } from "./search.js";
@@ -104,7 +105,25 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
   const PHOTO = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
   const MAX_PHOTO = 6 * 1024 * 1024;
   const withStatus = v => ({ ...v, status: visaStatus(v, { legs: forPerson(all(), v.person), ccOf, today: today() }) });
-  const visas = () => db.visas.list().map(withStatus).sort((a, b) => a.validUntil.localeCompare(b.validUntil));
+  const visas = () => db.visas.list().map(withStatus).sort(byRecent);
+  /** Every visa as a spreadsheet, newest first, with full numbers (for filling in forms). Owner only. */
+  function visasXlsx() {
+    const names = Object.fromEntries(people().map(p => [p.id, p.name]));
+    const STATE = { valid: "Valid", expiring: "Expiring soon", upcoming: "Not valid yet", expired: "Expired" };
+    const columns = [
+      { header: "Person", width: 14 }, { header: "Country", width: 18 }, { header: "Type", width: 12 }, { header: "Class / category", width: 18 },
+      { header: "Entries", width: 15 }, { header: "Visa number", width: 18 }, { header: "Issued", type: "date", width: 13 },
+      { header: "Valid from", type: "date", width: 13 }, { header: "Valid until", type: "date", width: 13 }, { header: "Stay per visit (days)", type: "number", width: 12 },
+      { header: "Issued at", width: 16 }, { header: "Name on visa", width: 24 }, { header: "Passport number", width: 16 }, { header: "Passport expires", type: "date", width: 15 },
+      { header: "Status", width: 14 }, { header: "Days left", type: "number", width: 10 }, { header: "Entries used", type: "number", width: 11 }, { header: "Notes", width: 40 },
+    ];
+    const rows = visas().map(v => [
+      names[v.person] || v.person, visaPlace(v, c => ref.countries[c]?.[0] || c), v.kind, v.category, VISA_ENTRIES[v.entries] || "", v.number,
+      v.issued, v.validFrom, v.validUntil, v.maxStay || "", v.issuedAt, v.name, v.passportNo, v.passportExpiry,
+      STATE[v.status.state], Math.max(0, v.status.daysLeft), v.status.used, v.notes,
+    ]);
+    return buildXlsx({ sheet: "Visas", columns, rows });
+  }
   function checkVisa(input) {
     const { visa, error } = cleanVisa(input, { known: knownCountries, people: new Set(people().map(p => p.id)) });
     if (error) throw new InputError(error);
@@ -167,6 +186,12 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
   const VISA_JOB_MS = 150_000;
   function startVisaRead(body = {}) {
     needAI(); // fail at once, not on the first poll, when AI is off
+    // Read again from a visa's saved photo (the "Read photo again" button), so nothing is uploaded twice.
+    if (body.visaId) {
+      const p = db.visas.photo(String(body.visaId));
+      if (!p) throw new InputError("This visa has no saved photo to read. Take a new one.", 404);
+      body = { image: `data:${p.mime};base64,${p.data.toString("base64")}` };
+    }
     if (!/^data:image\//.test(String(body.image || ""))) throw new InputError("Send a photo of the visa page.");
     for (const [k, j] of jobs) if (Date.now() - j.started > 600_000) jobs.delete(k);
     const id = randomBytes(9).toString("hex"), job = { state: "working", started: Date.now() };
@@ -456,7 +481,7 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     exportCSV: () => toOpenFlightsCSV(all(), ref, today()),
     aiStatus, aiExtract, aiAsk, aiStory, aiNameTrips, aiWhereNext, lookup, aiSettings, setAISettings, aiModels,
     searchSettings, setSearchSettings, webSearch, aiDigest,
-    visas, createVisa, updateVisa, removeVisa, visaPhoto, aiVisa, startVisaRead, visaReadJob,
+    visas, visasXlsx, createVisa, updateVisa, removeVisa, visaPhoto, aiVisa, startVisaRead, visaReadJob,
     get features() { return { ai: Boolean(ai()), lookup: Boolean(lookupProvider), search: Boolean(search()) }; },
   };
 }

@@ -127,6 +127,12 @@ export function buildApp(env = process.env) {
     const needVisaOwner = () => { if (who !== "owner") throw new InputError("Only the owner can see visas. Sign in first.", 401); };
     const vm = path.match(/^\/api\/visas\/(v_[a-f0-9]{12})(\/photo)?$/);
     if (path === "/api/visas" && method === "GET") { needVisaOwner(); return send(res, 200, { visas: service.visas() }); }
+    if (path === "/api/visas/export.xlsx" && method === "GET") {
+      needVisaOwner(); const file = service.visasXlsx();
+      res.writeHead(200, { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "content-length": file.length, "cache-control": "no-store",
+        "content-disposition": `attachment; filename="wander-visas-${new Date().toISOString().slice(0, 10)}.xlsx"`, "x-content-type-options": "nosniff" });
+      return res.end(file);
+    }
     if (path === "/api/visas" && method === "POST") { needVisaOwner(); return send(res, 201, service.createVisa(await readJSON(req, 10 * 1024 * 1024))); }
     if (path === "/api/visas/read" && method === "POST") { needVisaOwner(); return send(res, 200, await service.aiVisa(await readJSON(req, 12 * 1024 * 1024))); }
     // The app starts a read and polls for it, so no single request has to outlast a proxy's timeout.

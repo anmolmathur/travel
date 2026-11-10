@@ -190,3 +190,52 @@ test("Gemini quick reads ask for a small thinking budget, and drop it if the mod
   assert.deepEqual(bodies.map(b => Boolean(b.generationConfig.thinkingConfig)), [true, false]);
   assert.equal(bodies[0].generationConfig.thinkingConfig.thinkingBudget, 512);
 });
+
+test("visas are listed newest first, and export to an .xlsx the owner alone can download", async () => {
+  const { byRecent } = await import("../public/lib/visa.js");
+  const list = [{ id: "a", issued: "2019-05-01", validUntil: "2029-04-30" }, { id: "b", validFrom: "2026-08-20", validUntil: "2026-12-31" }, { id: "c", issued: "2024-01-01", validUntil: "2025-01-01" }];
+  assert.deepEqual([...list].sort(byRecent).map(v => v.id), ["b", "c", "a"]);
+  const { handler } = buildApp({ WANDER_DB: ":memory:", COOKIE_SECURE: "false", WANDER_PASSWORD: "pw", WANDER_API_TOKEN: "t".repeat(24), PUBLIC_READ: "true", WANDER_PEOPLE: "me:Anmol,kruti:Kruti" });
+  const srv = createServer(handler); await new Promise(r => srv.listen(0, r));
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const cookie = (await fetch(`${base}/api/login`, { method: "POST", body: JSON.stringify({ password: "pw" }) })).headers.get("set-cookie").split(";")[0];
+    const post = b => fetch(`${base}/api/visas`, { method: "POST", headers: { cookie }, body: JSON.stringify(b) });
+    await post({ person: "me", country: "US", issued: "2019-05-01", validUntil: "2029-04-30", number: "0123<&>", passportNo: "Z1234567" });
+    await post({ person: "kruti", country: "SCHENGEN", entries: "multiple", issued: "2026-08-20", validUntil: "2026-12-31", maxStay: 90 });
+    assert.deepEqual((await (await fetch(`${base}/api/visas`, { headers: { cookie } })).json()).visas.map(v => v.country), ["SCHENGEN", "US"]);
+    assert.equal((await fetch(`${base}/api/visas/export.xlsx`)).status, 401);
+    assert.equal((await fetch(`${base}/api/visas/export.xlsx`, { headers: { authorization: `Bearer ${"t".repeat(24)}` } })).status, 401);
+    const res = await fetch(`${base}/api/visas/export.xlsx`, { headers: { cookie } });
+    assert.equal(res.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    assert.match(res.headers.get("content-disposition"), /attachment; filename="wander-visas-\d{4}-\d{2}-\d{2}\.xlsx"/);
+    const buf = Buffer.from(await res.arrayBuffer());
+    assert.equal(buf.readUInt32LE(0), 0x04034b50, "a zip file");
+    // unpack the sheet and check rows, order, escaping, dates and text kept as text
+    const { inflateRawSync } = await import("node:zlib");
+    const parts = {}; let o = 0;
+    while (buf.readUInt32LE(o) === 0x04034b50) {
+      const size = buf.readUInt32LE(o + 18), nameLen = buf.readUInt16LE(o + 26), extra = buf.readUInt16LE(o + 28);
+      const name = buf.subarray(o + 30, o + 30 + nameLen).toString(); const start = o + 30 + nameLen + extra;
+      parts[name] = inflateRawSync(buf.subarray(start, start + size)).toString(); o = start + size;
+    }
+    assert.deepEqual(Object.keys(parts).sort(), ["[Content_Types].xml", "_rels/.rels", "xl/_rels/workbook.xml.rels", "xl/styles.xml", "xl/workbook.xml", "xl/worksheets/sheet1.xml"]);
+    const sheet = parts["xl/worksheets/sheet1.xml"];
+    assert.ok(sheet.indexOf("Kruti") < sheet.indexOf("Anmol"), "newest first");
+    assert.match(sheet, /Schengen area/); assert.match(sheet, /0123&lt;&amp;&gt;/); assert.match(sheet, /Z1234567/);
+    assert.match(sheet, /<c r="G2" s="2"><v>46254<\/v><\/c>/, "2026-08-20 as an Excel date");
+  } finally { srv.close(); }
+});
+
+test("Read photo again: a job can read a visa's saved photo without a new upload", async () => {
+  const db = openDb(":memory:");
+  let seen = null;
+  const svc = createService({ db, ref, makeAI: () => ({ provider: "fake", model: "m", visa: async ({ image }) => { seen = image; return { country: "GBR", validUntil: "01 MAR 2028" }; } }), aiEnv: { apiKey: "k" } });
+  const v = svc.createVisa({ country: "GB", validUntil: "2027-01-01", photo: "data:image/jpeg;base64," + Buffer.from("saved-jpeg").toString("base64") });
+  const { job } = svc.startVisaRead({ visaId: v.id });
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual([seen.mimeType, Buffer.from(seen.data, "base64").toString()], ["image/jpeg", "saved-jpeg"]);
+  assert.equal(svc.visaReadJob(job).visa.validUntil, "2028-03-01");
+  const bare = svc.createVisa({ country: "US", validUntil: "2027-01-01" });
+  assert.throws(() => svc.startVisaRead({ visaId: bare.id }), /no saved photo/);
+});

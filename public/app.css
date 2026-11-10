@@ -517,3 +517,5 @@ body.visas .visa-only{display:inline-flex!important}
 .visa-form .field.auto input,.visa-form .field.auto select{border-color:rgba(161,140,255,.7);background:rgba(161,140,255,.08)}
 .visa-form .field.auto label::after{content:" ✦";color:var(--violet)}
 .story .vstatus{font:400 14px/1.45 var(--f-body);margin:0 0 12px}
+.vhead-btns{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.sec-head .vhead-btns .btn{margin-left:0}
