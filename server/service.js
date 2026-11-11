@@ -305,10 +305,12 @@ export function createService({ db, ref, aiEnv = {}, makeAI = createAI, searchEn
     if (!/^\d{10}$/.test(pnr || "")) throw new InputError("Add the 10-digit PNR to this ticket first.");
     const prev = f.rail?.prediction;
     if (!force && prev?.at && Date.now() - Date.parse(prev.at) < 120_000) return { flight: f, reading: prev, cached: true };
-    const r = await chanceProvider.lookup(pnr);
+    let r;
+    try { r = await chanceProvider.lookup(pnr); }
+    catch (e) { console.warn(`ConfirmTkt lookup failed: ${e.upstream ? `HTTP ${e.upstream}` : e.message}`); throw e; }
     if (r.chance == null && !r.label && !r.currentStatus && !r.bookingStatus) {
       console.warn(`ConfirmTkt page read nothing useful (${r.size} bytes, method ${r.method}). Run: node server/cli.js confirmtkt <PNR> to see the page's layout.`);
-      throw new InputError("ConfirmTkt's page didn't show a confirmation chance for this PNR (it may be confirmed, cancelled, or the page changed). Open ConfirmTkt to check.", 502);
+      throw new InputError("ConfirmTkt's page didn't show a confirmation chance for this PNR (it may be confirmed, cancelled, or the page changed). Open ConfirmTkt to check.", 422);
     }
     const reading = { chance: r.chance, label: r.label, bookingStatus: r.bookingStatus, currentStatus: r.currentStatus, chart: r.chart, at: r.checkedAt, source: "ConfirmTkt" };
     const doc = db.put(id, { ...f, rail: cleanRail({ ...(f.rail || {}), prediction: reading }) });

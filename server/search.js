@@ -1,6 +1,6 @@
 // Web search through a self-hosted SearXNG instance (JSON API), so the app's quick links can show results in place
 // instead of sending the traveller to Google. Only the search words leave the server: never a PNR or a name.
-const fail = (message, status = 502) => Object.assign(new Error(message), { status });
+const fail = (message, status = 503) => Object.assign(new Error(message), { status });
 
 export function createSearch({ url, fetchImpl = fetch, timeoutMs = 9000 }) {
   const base = String(url || "").trim().replace(/\/+$/, "");

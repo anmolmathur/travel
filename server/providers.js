@@ -18,7 +18,7 @@ export function createOpenAI({ apiKey, model, smartModel, baseUrl, fetchImpl = f
   async function listModels(deadline) {
     const res = await request(`${base}/models`, { headers }, deadline);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw fail(`${label} rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 502);
+    if (!res.ok) throw fail(`${label} rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 503);
     return (data.data || []).map(m => m.id).filter(id => !/(embed|whisper|tts|dall-e|moderation|transcribe|realtime|audio|image|search)/i.test(id)).sort();
   }
 
@@ -48,9 +48,9 @@ export function createOpenAI({ apiKey, model, smartModel, baseUrl, fetchImpl = f
     if (!res.ok && retryable(res.status)) { await sleep(1500); ({ res, data } = await post()); }
     if (!res.ok) {
       const msg = data?.error?.message || `HTTP ${res.status}`;
-      if (res.status === 401 || res.status === 403) throw fail(`${label} rejected the API key: ${msg}`, 502);
+      if (res.status === 401 || res.status === 403) throw fail(`${label} rejected the API key: ${msg}`, 503);
       if (res.status === 429) throw fail(`${label} rate limit or quota reached: ${msg}`, 429);
-      if (res.status === 404) throw fail(`${label} doesn't know the model "${m}". Pick another in AI settings.`, 502);
+      if (res.status === 404) throw fail(`${label} doesn't know the model "${m}". Pick another in AI settings.`, 503);
       throw fail(`${label} error (${m}): ${msg}`);
     }
     const c = data.choices?.[0]?.message?.content;
@@ -73,7 +73,7 @@ export function createAnthropic({ apiKey, model, smartModel, fetchImpl = fetch }
   async function listModels(deadline) {
     const res = await request(`${ANTHROPIC}/models?limit=1000`, { headers }, deadline);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw fail(`Anthropic rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 502);
+    if (!res.ok) throw fail(`Anthropic rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 503);
     return (data.data || []).map(m => m.id);
   }
 
@@ -95,9 +95,9 @@ export function createAnthropic({ apiKey, model, smartModel, fetchImpl = fetch }
     if (!res.ok && retryable(res.status)) { await sleep(1500); ({ res, data } = await post()); }
     if (!res.ok) {
       const msg = data?.error?.message || `HTTP ${res.status}`;
-      if (res.status === 401 || res.status === 403) throw fail(`Anthropic rejected the API key: ${msg}`, 502);
+      if (res.status === 401 || res.status === 403) throw fail(`Anthropic rejected the API key: ${msg}`, 503);
       if (res.status === 429) throw fail(`Claude rate limit reached: ${msg}`, 429);
-      if (res.status === 404) throw fail(`Anthropic doesn't know the model "${m}". Pick another in AI settings.`, 502);
+      if (res.status === 404) throw fail(`Anthropic doesn't know the model "${m}". Pick another in AI settings.`, 503);
       if (retryable(res.status)) throw fail(`Claude is overloaded right now. Try again in a minute.`);
       throw fail(`Claude error (${m}): ${msg}`);
     }

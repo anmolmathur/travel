@@ -44,7 +44,7 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
   async function listModels(deadline) {
     const res = await request(`${API}/models?pageSize=1000`, { headers }, deadline);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw fail(`Gemini rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 502);
+    if (!res.ok) throw fail(`Gemini rejected the API key: ${data?.error?.message || `HTTP ${res.status}`}`, 503);
     return (data.models || []).filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => m.name.replace(/^models\//, ""));
   }
 
@@ -121,7 +121,7 @@ export function createGemini({ apiKey, model, smartModel, fetchImpl = fetch }) {
         throw fail(`Your Gemini key's free daily allowance is used up (tried ${[...spent.keys()].filter(isSpent).join(", ") || used}). It resets in ${inHours(wait)}. To keep going now: turn on billing for the key's Google project (aistudio.google.com → Get API key → set up billing), or switch to another provider in ⚙ AI. You can also type the details in by hand.`, 429);
       }
       if (res.status === 429) throw fail(`Gemini rate limit reached: ${m.split(/\n|\* /)[0].slice(0, 160)} Wait a minute and try again.`, 429);
-      if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`, 502);
+      if ((res.status === 400 && /api key/i.test(m)) || res.status === 403) throw fail(`Gemini rejected the API key: ${m}`, 503);
       if (isBusy(res.status, m)) throw fail(`Gemini is overloaded right now (tried ${used} and other Flash models). Try again in a minute.`);
       throw fail(`Gemini error (${used}): ${m}`);
     }

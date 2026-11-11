@@ -1,3 +1,4 @@
+// Upstream failures answer 503, never 502: Cloudflare replaces a 502 with its own error page, hiding the reason.
 // Confirmation chance for an Indian Railways PNR, read from ConfirmTkt's public PNR page
 // (https://www.confirmtkt.com/pnr-status/<PNR>). Only the PNR is sent; the server fetches on demand, when the owner
 // taps the button. The page has no documented API, so the reader is deliberately tolerant: it looks for the
@@ -99,11 +100,14 @@ export function createConfirmTkt({ fetchImpl = fetch, timeoutMs = 15000, base = 
     async lookup(pnr) {
       let res;
       try { res = await fetchImpl(PAGE(pnr), { headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml", "accept-language": "en-IN,en;q=0.8" }, signal: AbortSignal.timeout(timeoutMs) }); }
-      catch (e) { throw Object.assign(new Error(e?.name === "TimeoutError" ? "ConfirmTkt took too long to answer. Try again in a minute." : `Couldn't reach ConfirmTkt (${e?.cause?.code || e?.message || "network error"}).`), { status: 502 }); }
-      if (!res.ok) throw Object.assign(new Error(`ConfirmTkt answered HTTP ${res.status}. Try again later, or open the page.`), { status: 502 });
+      catch (e) { throw Object.assign(new Error(e?.name === "TimeoutError" ? "ConfirmTkt took too long to answer. Try again in a minute." : `Couldn't reach ConfirmTkt (${e?.cause?.code || e?.message || "network error"}).`), { status: 503 }); }
+      if (!res.ok) {
+        const why = res.status === 403 || res.status === 429 ? "it refused the request (it may block servers from reading its pages)" : `HTTP ${res.status}`;
+        throw Object.assign(new Error(`ConfirmTkt didn't answer: ${why}. Open the page instead.`), { status: 503, upstream: res.status });
+      }
       const html = await res.text();
       const r = parseConfirmTkt(html);
-      if (r.blocked) throw Object.assign(new Error("ConfirmTkt asked for a human check (captcha), so Wander can't read it. Open the page instead."), { status: 502 });
+      if (r.blocked) throw Object.assign(new Error("ConfirmTkt asked for a human check (captcha), so Wander can't read it. Open the page instead."), { status: 503 });
       return { ...r, url: PAGE(pnr), checkedAt: new Date().toISOString(), size: html.length };
     },
   };
