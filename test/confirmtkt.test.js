@@ -39,7 +39,8 @@ test("the client sends only the PNR, and explains failures", async () => {
   const r = await ok.lookup("1234567890");
   assert.equal(seen.url, "https://www.confirmtkt.com/pnr-status/1234567890"); assert.match(seen.ua, /Mozilla/);
   assert.equal(r.chance, 72); assert.ok(r.checkedAt);
-  await assert.rejects(createConfirmTkt({ fetchImpl: async () => ({ ok: false, status: 503, text: async () => "" }) }).lookup("1"), /HTTP 503/);
+  await assert.rejects(createConfirmTkt({ fetchImpl: async () => ({ ok: false, status: 503, text: async () => "" }) }).lookup("1"), e => /HTTP 503/.test(e.message) && e.status === 503);
+  await assert.rejects(createConfirmTkt({ fetchImpl: async () => ({ ok: false, status: 403, text: async () => "" }) }).lookup("1"), e => /refused/.test(e.message) && e.status === 503, "never 502: Cloudflare would hide the message");
   await assert.rejects(createConfirmTkt({ fetchImpl: async () => ({ ok: true, status: 200, text: async () => CAPTCHA }) }).lookup("1"), /captcha/);
   await assert.rejects(createConfirmTkt({ fetchImpl: async () => { throw Object.assign(new Error("x"), { cause: { code: "ENOTFOUND" } }); } }).lookup("1"), /ENOTFOUND/);
 });
@@ -71,4 +72,12 @@ test("the ticket keeps ConfirmTkt's reading apart from the owner's own status, a
 test("train tickets link to ConfirmTkt with the PNR", () => {
   const l = legLinks({ mode: "train", flight: "12951", pnr: "1234567890" }).find(x => x.label === "ConfirmTkt");
   assert.equal(l.href, "https://www.confirmtkt.com/pnr-status/1234567890");
+});
+
+test("no error Wander raises uses 502: Cloudflare swaps a 502 for its own page and the reason is lost", async () => {
+  const { readdirSync } = await import("node:fs");
+  const dir = new URL("../server/", import.meta.url);
+  const hits = readdirSync(dir).filter(f => f.endsWith(".js")).flatMap(f => readFileSync(new URL(f, dir), "utf8").split("\n")
+    .map((l, i) => [f, i + 1, l]).filter(([, , l]) => /(status:\s*502|,\s*502\)|status\s*=\s*502|\?\s*\d+\s*:\s*502)/.test(l)));
+  assert.deepEqual(hits, []);
 });

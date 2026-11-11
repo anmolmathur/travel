@@ -11,7 +11,7 @@ export function createAeroDataBox({ apiKey, host = "aerodatabox.p.rapidapi.com",
       headers: { "X-RapidAPI-Key": apiKey, "X-RapidAPI-Host": host },
     });
     if (res.status === 204 || res.status === 404) return [];
-    if (!res.ok) { const e = new Error(`Flight lookup failed (HTTP ${res.status}).`); e.status = res.status === 429 ? 429 : 502; throw e; }
+    if (!res.ok) { const e = new Error(`Flight lookup failed (HTTP ${res.status}).`); e.status = res.status === 429 ? 429 : 503; throw e; }
     const data = await res.json();
     const list = (Array.isArray(data) ? data : [data]).map(x => {
       const dep = x.departure || {}, arr = x.arrival || {};
