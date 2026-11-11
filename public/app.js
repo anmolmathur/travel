@@ -504,11 +504,12 @@ function renderJourneys() {
       <div class="jmeta">${r.status ? `<span class="chip ${kind}">${esc(r.status)}</span>` : ""}${r.cls ? `<span>${esc(r.cls)} · ${esc(RAIL_CLASSES[r.cls])}</span>` : ""}${r.quota && r.quota !== "GN" ? `<span>${esc(RAIL_QUOTAS[r.quota])}</span>` : ""}
         ${train ? `<span>${r.chart ? "Chart prepared" : "Chart not prepared yet"}</span>` : ""}${r.platform ? `<span>Platform <b>${esc(r.platform)}</b></span>` : ""}${!train && f.seat ? `<span>Seat <b>${esc(f.seat)}</b></span>` : ""}
         ${r.updatedAt ? `<span class="muted">updated ${esc(new Date(r.updatedAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</span>` : ""}</div>
+      ${train && f.pnr ? chanceBlock(r.prediction) : ""}
       ${visaChips(f)}
       ${f.pnr ? `<div class="jpnr">${train ? "PNR" : "Booking ref"} <b class="mono">${esc(f.pnr)}</b><button class="btn small ghost" type="button" data-copy="${esc(f.pnr)}">Copy</button></div>` : ""}
       ${pax ? `<div class="jpax">${pax}</div>` : ""}
       ${links ? `<div class="jlinks">${links}</div>` : ""}
-      <div class="row owner-only">${train ? '<button class="btn small" type="button" data-upd>Update status</button>' : ""}<button class="btn small ghost" type="button" data-edit>Edit</button></div>
+      <div class="row owner-only">${train ? '<button class="btn small" type="button" data-upd>Update status</button>' : ""}${train && f.pnr ? '<button class="btn small" type="button" data-chance title="Asks ConfirmTkt (sends only the PNR)">📊 Confirmation chance</button>' : ""}<button class="btn small ghost" type="button" data-edit>Edit</button></div>
     </article>`;
   };
   el.innerHTML = `<div class="sec-head"><h2>Journeys</h2><p>Your next trains and flights. Tickets are saved on this device too, so they open without signal.</p></div><div class="jlist">${list.map(card).join("")}</div>`;
@@ -519,9 +520,33 @@ function renderJourneys() {
     const card = e.target.closest(".jcard"), f = card && flights.find(x => x.id === card.dataset.id); if (!f) return;
     if (e.target.closest("[data-edit]")) { loadForm(f); go("add"); }
     if (e.target.closest("[data-upd]")) openRailUpdate(f);
+    const cb = e.target.closest("[data-chance]");
+    if (cb) {
+      cb.disabled = true; cb.textContent = "Asking ConfirmTkt…";
+      try {
+        const { flight: doc, cached } = await api(`/api/flights/${encodeURIComponent(f.id)}/chance`, { method: "POST", body: "{}" });
+        Object.assign(f, doc); renderJourneys();
+        toast(cached ? "Checked under 2 minutes ago, so that reading is shown" : "Confirmation chance updated from ConfirmTkt");
+      } catch (err) {
+        cb.disabled = false; cb.textContent = "📊 Confirmation chance";
+        toast(err.message, () => window.open(`https://www.confirmtkt.com/pnr-status/${encodeURIComponent(f.pnr)}`, "_blank", "noopener"), "Open ConfirmTkt", 12000);
+      }
+    }
     const sb = e.target.closest("[data-search]");
     if (sb) openSearch(sb.dataset.search, `${sb.dataset.label} · ${legName(f)}`);
   };
+}
+/** ConfirmTkt's latest reading for a train ticket: the chance as a bar, its label, its statuses and how old it is. */
+function chanceBlock(p) {
+  if (!p) return "";
+  const n = Number.isFinite(p.chance) ? p.chance : null;
+  const kind = n == null ? "" : n >= 80 ? "ok" : n >= 50 ? "rac" : "wl";
+  const ago = (() => { const m = Math.round((Date.now() - Date.parse(p.at)) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : niceDate(p.at.slice(0, 10)); })();
+  return `<div class="jchance">
+    <div class="jchance-top"><span>Confirmation chance</span>${n != null ? `<b class="chip ${kind}">${n}%</b>` : p.label ? `<b class="chip">${esc(p.label)}</b>` : ""}</div>
+    ${n != null ? `<div class="vbar"><i style="width:${n}%"></i></div>` : ""}
+    <small>${[p.label && n != null ? esc(p.label) : "", p.currentStatus ? `Now ${esc(p.currentStatus)}` : "", p.bookingStatus ? `booked ${esc(p.bookingStatus)}` : "", p.chart ? `chart ${esc(p.chart)}` : ""].filter(Boolean).join(" · ")}${p.at ? ` · ConfirmTkt, ${ago}` : ""}</small>
+  </div>`;
 }
 /** Web search through the server's SearXNG, shown in place; the AI can boil the snippets down to an answer. */
 async function openSearch(q, title) {

@@ -10,6 +10,7 @@ import { openDb } from "./db.js";
 import { createAuth } from "./auth.js";
 import { createAeroDataBox } from "./lookup.js";
 import { createService, InputError } from "./service.js";
+import { createConfirmTkt } from "./confirmtkt.js";
 import { handleMcp } from "./mcp.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,7 +37,9 @@ export function buildApp(env = process.env) {
   const db = openDb(env.WANDER_DB || join(ROOT, "data", "wander.db"));
   const aiEnv = { provider: "gemini", apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL || "gemini-flash-latest", smartModel: env.GEMINI_MODEL_SMART || env.GEMINI_MODEL || "gemini-flash-latest" };
   const lookupProvider = createAeroDataBox({ apiKey: env.AERODATABOX_API_KEY });
-  const service = createService({ db, ref, aiEnv, searchEnv: env.SEARXNG_URL || "", lookupProvider, defaultPeople: env.WANDER_PEOPLE || "" });
+  const service = createService({ db, ref, aiEnv, searchEnv: env.SEARXNG_URL || "", lookupProvider, defaultPeople: env.WANDER_PEOPLE || "",
+    // CONFIRMTKT_BASE only points tests at a stand-in; unset, it's www.confirmtkt.com.
+    chanceProvider: createConfirmTkt({ base: env.CONFIRMTKT_BASE || undefined }) });
   const auth = createAuth({
     password: env.WANDER_PASSWORD, apiToken: env.WANDER_API_TOKEN, secret: env.SESSION_SECRET,
     publicRead: env.PUBLIC_READ === "true", secureCookie: env.COOKIE_SECURE !== "false",
@@ -104,6 +107,8 @@ export function buildApp(env = process.env) {
     if (m && method === "PUT") { needWrite(); return send(res, 200, service.replace(m[1], await readJSON(req))); }
     if (m && method === "PATCH") { needWrite(); return send(res, 200, service.patch(m[1], await readJSON(req))); }
     if (m && method === "DELETE") { needWrite(); return send(res, 200, service.remove(m[1])); }
+    const cm = path.match(/^\/api\/flights\/([A-Za-z0-9_\-.~:@+]{1,200})\/chance$/);
+    if (cm && method === "POST") { needWrite(); return send(res, 200, await service.trainChance(cm[1], { force: url.searchParams.get("force") === "1" })); }
     if (path === "/api/airports/replace" && method === "POST") { needWrite(); const b = await readJSON(req); return send(res, 200, service.replaceAirport(b.from, b.to, b.ids)); }
     if (path === "/api/import" && method === "POST") { needWrite(); return send(res, 200, service.importCSV(await readBody(req, 5 * 1024 * 1024))); }
     if (path === "/api/export.csv") {

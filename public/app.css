@@ -519,3 +519,6 @@ body.visas .visa-only{display:inline-flex!important}
 .story .vstatus{font:400 14px/1.45 var(--f-body);margin:0 0 12px}
 .vhead-btns{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 .sec-head .vhead-btns .btn{margin-left:0}
+.jchance{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:12px;background:var(--surface-2)}
+.jchance-top{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:var(--ink-2);letter-spacing:.04em;text-transform:uppercase}
+.jchance small{color:var(--ink-3);font-size:12.5px}
