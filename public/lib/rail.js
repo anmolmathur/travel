@@ -40,6 +40,18 @@ const compact = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !=
 export const cleanPnr = v => String(v ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 12);
 
 /** Cleans the ticket details stored on a train leg. Returns undefined when there's nothing worth keeping. */
+/** ConfirmTkt's reading, kept apart from the owner's own status: chance 0-100 (or none), label, statuses, when. */
+export function cleanPrediction(p) {
+  if (!p || typeof p !== "object") return undefined;
+  const n = Math.round(Number(p.chance));
+  const out = compact({
+    chance: Number.isFinite(n) && n >= 0 && n <= 100 && p.chance !== null && p.chance !== "" ? n : "",
+    label: txt(p.label, 80), bookingStatus: up(p.bookingStatus, 40), currentStatus: up(p.currentStatus, 40),
+    chart: p.chart === true ? "prepared" : p.chart === false ? "not prepared" : "", at: txt(p.at, 30), source: txt(p.source, 20),
+  });
+  return out.at ? out : undefined;
+}
+
 export function cleanRail(r) {
   if (!r || typeof r !== "object") return undefined;
   const pax = (Array.isArray(r.passengers) ? r.passengers : []).slice(0, 12).map(p => compact({
@@ -51,6 +63,7 @@ export function cleanRail(r) {
     trainName: txt(r.trainName, 60), cls: RAIL_CLASSES[up(r.cls, 3)] ? up(r.cls, 3) : "", quota: RAIL_QUOTAS[up(r.quota, 3)] ? up(r.quota, 3) : "",
     fromStn: up(r.fromStn, 6).replace(/[^A-Z]/g, ""), toStn: up(r.toStn, 6).replace(/[^A-Z]/g, ""), arr: time(r.arr), arrDay: Math.max(0, Math.min(3, parseInt(r.arrDay, 10) || 0)) || "",
     platform: up(r.platform, 6), status: up(r.status, 24), chart: r.chart === true || r.chart === "true", updatedAt: txt(r.updatedAt, 30), passengers: pax,
+    prediction: cleanPrediction(r.prediction),
   });
   return Object.keys(out).length ? out : undefined;
 }
@@ -120,6 +133,7 @@ export function legLinks(f) {
     const train = (f.flight || "").replace(/\D/g, "").slice(0, 5), pnr = f.pnr;
     return [
       pnr && { label: "PNR status", href: "https://www.indianrail.gov.in/enquiry/PNR/PnrEnquiry.html?locale=en", official: true, copy: pnr },
+      pnr && { label: "ConfirmTkt", href: `https://www.confirmtkt.com/pnr-status/${pnr}`, note: "PNR status and confirmation chance" },
       pnr && { label: "SMS PNR to 139", href: `sms:139?&body=${encodeURIComponent(`PNR ${pnr}`)}`, note: "works without data" },
       train && s("Live running status", `${train} train live running status`),
       train && f.rail?.fromStn && s("Platform", `${train} train platform number at ${f.rail.fromStn}`),

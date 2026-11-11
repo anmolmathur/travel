@@ -17,9 +17,21 @@ if (cmd === "import" && arg) {
   const s = await service.aiStatus();
   console.log(JSON.stringify(s, null, 2));
   process.exit(s.error ? 1 : 0);
+} else if (cmd === "confirmtkt" && arg) {
+  // What Wander reads from ConfirmTkt's page for a PNR, plus the page's layout (no names) to fix the reader if needed.
+  const { createConfirmTkt, embeddedJson, pageText } = await import("./confirmtkt.js");
+  const url = `https://www.confirmtkt.com/pnr-status/${arg.replace(/\D/g, "")}`;
+  const html = await (await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" } })).text();
+  const r = await createConfirmTkt({ fetchImpl: async () => ({ ok: true, status: 200, text: async () => html }) }).lookup(arg.replace(/\D/g, ""));
+  console.log("Wander read:", JSON.stringify({ chance: r.chance, label: r.label, bookingStatus: r.bookingStatus, currentStatus: r.currentStatus, chart: r.chart, method: r.method, blocked: r.blocked }));
+  const keys = new Set(); const walk = (o, p) => { if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) { const q = p ? `${p}.${k}` : k; if (v && typeof v === "object") walk(v, Array.isArray(o) ? p : q); else keys.add(q.replace(/\.\d+(?=\.|$)/g, "[]")); } };
+  embeddedJson(html).forEach(o => walk(o, ""));
+  console.log(`Page: ${html.length} bytes; embedded JSON keys (${keys.size}):`, [...keys].filter(k => /prob|chance|predict|confirm|status|chart|pnr|train/i.test(k)).slice(0, 60).join(", ") || "(none)");
+  console.log("Text lines mentioning chance/confirm/status (names hidden):");
+  for (const l of pageText(html).split("\n").filter(l => /chance|probab|predict|confirm|status|chart|%/i.test(l)).slice(0, 25)) console.log("  ", l.replace(/\b(MR|MRS|MS|MISS)\.?\s+[A-Z ]+/gi, "<name>").slice(0, 140));
 } else if (cmd === "export") {
   process.stdout.write(service.exportCSV());
 } else {
-  console.log("Usage: node server/cli.js import <file.csv> | export | ai-check | token");
+  console.log("Usage: node server/cli.js import <file.csv> | export | ai-check | token | confirmtkt <PNR>");
   process.exit(1);
 }
